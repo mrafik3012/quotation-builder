@@ -68,3 +68,32 @@ function temp_password(int $len = 12): string
     return $out;
 }
 function admin_count(): int { return (int)q("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'")->fetch()['n']; }
+
+/**
+ * Check email + password (+ 2FA code when enabled). Applies the sign-in lockouts.
+ * Returns ['user' => row] on success, ['need_2fa' => true] when a code is still required; otherwise calls fail().
+ */
+function authenticate(array $d): array
+{
+    $email = strtolower(str($d['email'] ?? '', 190));
+    $kUser = 'login:' . substr(hash('sha256', $email . '|' . client_ip()), 0, 40);
+    $kIp = 'loginip:' . client_ip();
+    if (rate_limit_peek($kUser, 5, 900) || rate_limit_peek($kIp, 60, 900)) fail('Too many failed sign-in attempts. Please wait 15 minutes and try again.', 429);
+    $u = q('SELECT * FROM users WHERE email = ?', [$email])->fetch();
+    if (!$u || !password_verify((string)($d['password'] ?? ''), $u['password_hash'])) {
+        rate_limit_hit($kUser, 900); rate_limit_hit($kIp, 900);
+        usleep(600000);
+        fail('Incorrect email or password', 401);
+    }
+    if ((int)$u['totp_enabled'] === 1) {
+        $code = trim((string)($d['code'] ?? ''));
+        if ($code === '') return ['need_2fa' => true];
+        $good = false;
+        $ctr = totp_verify((string)$u['totp_secret'], $code, (int)$u['totp_last']);
+        if ($ctr) { q('UPDATE users SET totp_last = ? WHERE id = ?', [$ctr, $u['id']]); $good = true; }
+        elseif (use_recovery_code($u, $code)) { $good = true; audit(['name' => $u['name']], '2fa.recovery_used', $u['email']); }
+        if (!$good) { rate_limit_hit($kUser, 900); rate_limit_hit($kIp, 900); usleep(600000); fail('That code is not valid. Use the current code from your authenticator app, or a recovery code.', 401); }
+    }
+    q('DELETE FROM rate_limits WHERE k = ?', [$kUser]);
+    return ['user' => $u];
+}

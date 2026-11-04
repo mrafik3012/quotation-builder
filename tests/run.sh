@@ -15,7 +15,7 @@ if [ -n "${MYSQL_DB:-}" ]; then
 else
   php install.php --sqlite --email=a@b.com --password=changeme123
 fi
-php -S "127.0.0.1:$PORT" >"$WORK/server.log" 2>&1 &
+php -S "127.0.0.1:$PORT" tests/router.php >"$WORK/server.log" 2>&1 &
 PHP_PID=$!
 sleep 1
 export BASE="http://127.0.0.1:$PORT"
@@ -28,7 +28,7 @@ if [ "${1:-}" = "--e2e" ]; then
   kill $PHP_PID; sleep 0.5; rm -f api/config.php api/data/app.sqlite
   if [ -n "${MYSQL_DB:-}" ]; then mysql -e "DROP DATABASE $MYSQL_DB; CREATE DATABASE $MYSQL_DB CHARACTER SET utf8mb4;" ; php install.php --host="${MYSQL_HOST:-localhost}" --dbname="$MYSQL_DB" --dbuser="$MYSQL_USER" --dbpass="${MYSQL_PASS:-}" --email=a@b.com --password=changeme123
   else php install.php --sqlite --email=a@b.com --password=changeme123; fi
-  php -S "127.0.0.1:$PORT" >"$WORK/server.log" 2>&1 & PHP_PID=$!; sleep 1
+  php -S "127.0.0.1:$PORT" tests/router.php >"$WORK/server.log" 2>&1 & PHP_PID=$!; sleep 1
   echo "== browser e2e (XSS, mobile, permissions, totals)"; node tests/e2e.js
 fi
 echo "ALL TESTS PASSED"

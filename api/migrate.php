@@ -66,7 +66,7 @@ function ensure_schema(): void
         ddl("CREATE TABLE IF NOT EXISTS password_resets (id $pk, user_id INT NOT NULL, token_hash CHAR(64) NOT NULL UNIQUE, expires_at VARCHAR(19) NOT NULL, used TINYINT NOT NULL DEFAULT 0, created_at VARCHAR(19) NOT NULL)$eng");
         // --- e-mail log + settings
         ddl("CREATE TABLE IF NOT EXISTS email_log (id $pk, recipient VARCHAR(190) NOT NULL, subject VARCHAR(255), status VARCHAR(12) NOT NULL, error VARCHAR(500), created_at VARCHAR(19) NOT NULL)$eng");
-        foreach (['smtp_host' => '', 'smtp_port' => '465', 'smtp_enc' => 'ssl', 'smtp_user' => '', 'smtp_pass' => '', 'mail_from' => '', 'mail_from_name' => '', 'client_reminders' => '0', 'backup_keep' => '14', 'cron_last_run' => '', 'cron_key' => bin2hex(random_bytes(16))] as $k => $v) {
+        foreach (['smtp_host' => '', 'smtp_port' => '465', 'smtp_enc' => 'ssl', 'smtp_user' => '', 'smtp_pass' => '', 'mail_from' => '', 'mail_from_name' => '', 'client_reminders' => '0', 'oauth_enabled' => '1', 'backup_keep' => '14', 'cron_last_run' => '', 'cron_key' => bin2hex(random_bytes(16))] as $k => $v) {
             if (get_setting($k) === null) set_setting($k, $v);
         }
         // --- invoicing: cancel, credit notes, receipts, e-invoice references

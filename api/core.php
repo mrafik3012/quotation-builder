@@ -428,11 +428,19 @@ function roof_calc(array $in, array $mats, array $rates, array $custom = []): ?a
     return ['inputs' => $p, 'geometry' => array_map(fn($v) => is_float($v) ? round($v, 2) : $v, $g), 'packages' => $packages];
 }
 
+/** Folder the app lives in as seen from the web (e.g. "" at the domain root, "/quotes" in a sub-folder). Independent of URL rewriting. */
+function app_base_path(): string
+{
+    $dr = realpath((string)($_SERVER['DOCUMENT_ROOT'] ?? '')) ?: '';
+    $app = realpath(dirname(__DIR__)) ?: '';
+    if ($dr !== '' && $app !== '' && strpos(str_replace('\\', '/', $app) . '/', str_replace('\\', '/', $dr) . '/') === 0) return rtrim(substr(str_replace('\\', '/', $app), strlen(str_replace('\\', '/', $dr))), '/');
+    return rtrim(dirname(dirname((string)($_SERVER['SCRIPT_NAME'] ?? '/api/x.php'))), '/\\');
+}
+
 function app_base_url(): string
 {
     $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
-    $dir = rtrim(dirname(dirname($_SERVER['SCRIPT_NAME'] ?? '/api/mcp.php')), '/\\');
-    return ($https ? 'https://' : 'http://') . ($_SERVER['HTTP_HOST'] ?? 'localhost') . $dir;
+    return ($https ? 'https://' : 'http://') . ($_SERVER['HTTP_HOST'] ?? 'localhost') . app_base_path();
 }
 
 /** Create (or reuse) the private client link for a quote family; moves a draft to "sent". Returns the token. */
@@ -475,4 +483,10 @@ function backup_files(): array
 {
     $files = glob(data_dir() . '/backups/backup-*.json.gz') ?: []; rsort($files);
     return array_map(fn($f) => ['name' => basename($f), 'bytes' => filesize($f), 'at' => date('Y-m-d H:i:s', filemtime($f))], array_slice($files, 0, 30));
+}
+
+function revoke_grant(string $grantId): void
+{
+    q('UPDATE oauth_refresh SET revoked = 1 WHERE grant_id = ?', [$grantId]);
+    q('UPDATE api_tokens SET revoked = 1 WHERE grant_id = ?', [$grantId]);
 }

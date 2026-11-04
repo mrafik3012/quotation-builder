@@ -41,6 +41,8 @@ function bearer_token(): string
 }
 
 
+function oauth_on(): bool { return (get_setting('oauth_enabled') ?? '1') !== '0'; }
+
 /* ---------------- request handling ---------------- */
 $method = $_SERVER['REQUEST_METHOD'];
 if ($method === 'OPTIONS') { http_response_code(204); header('Allow: POST, OPTIONS'); exit; }
@@ -52,13 +54,13 @@ try {
     $ip = client_ip();
     $tok = bearer_token();
     if ($tok === '' || strlen($tok) > 200) {
-        header('WWW-Authenticate: Bearer realm="Infraura Quotation Builder MCP"');
+        header('WWW-Authenticate: Bearer realm="Infraura Quotation Builder MCP"' . (oauth_on() ? ', resource_metadata="' . app_base_url() . '/api/oauth.php?r=resource-metadata"' : ''));
         rpc_error(null, -32001, 'Authentication required. Send "Authorization: Bearer <token>" (create a token in Settings > AI assistants).', 401);
     }
     $tr = q('SELECT * FROM api_tokens WHERE token_hash = ? AND revoked = 0', [hash('sha256', $tok)])->fetch();
     if (!$tr || ($tr['expires_at'] && $tr['expires_at'] < now())) {
         rate_limit('mcpauth:' . $ip, 30, 600);   // throttle token guessing
-        header('WWW-Authenticate: Bearer realm="Infraura Quotation Builder MCP", error="invalid_token"');
+        header('WWW-Authenticate: Bearer realm="Infraura Quotation Builder MCP", error="invalid_token"' . (oauth_on() ? ', resource_metadata="' . app_base_url() . '/api/oauth.php?r=resource-metadata"' : ''));
         rpc_error(null, -32001, 'Invalid, expired or revoked token.', 401);
     }
     rate_limit('mcp:' . $tr['id'], 120, 60);

@@ -37,27 +37,9 @@ function route(string $m, string $a, ?string $b, ?string $c): void
     if ($a === 'auth') {
         if ($b === 'login' && $m === 'POST') {
             ensure_schema();
-            $d = body();
-            $email = strtolower(str($d['email'] ?? '', 190));
-            $kUser = 'login:' . substr(hash('sha256', $email . '|' . client_ip()), 0, 40);
-            $kIp = 'loginip:' . client_ip();
-            if (rate_limit_peek($kUser, 5, 900) || rate_limit_peek($kIp, 60, 900)) fail('Too many failed sign-in attempts. Please wait 15 minutes and try again.', 429);
-            $u = q('SELECT * FROM users WHERE email = ?', [$email])->fetch();
-            if (!$u || !password_verify((string)($d['password'] ?? ''), $u['password_hash'])) {
-                rate_limit_hit($kUser, 900); rate_limit_hit($kIp, 900);
-                usleep(600000);
-                fail('Incorrect email or password', 401);
-            }
-            if ((int)$u['totp_enabled'] === 1) {            // two-step sign-in
-                $code = trim((string)($d['code'] ?? ''));
-                if ($code === '') json_out(['need_2fa' => true]);
-                $good = false;
-                $ctr = totp_verify((string)$u['totp_secret'], $code, (int)$u['totp_last']);
-                if ($ctr) { q('UPDATE users SET totp_last = ? WHERE id = ?', [$ctr, $u['id']]); $good = true; }
-                elseif (use_recovery_code($u, $code)) { $good = true; audit(['name' => $u['name']], '2fa.recovery_used', $u['email']); }
-                if (!$good) { rate_limit_hit($kUser, 900); rate_limit_hit($kIp, 900); usleep(600000); fail('That code is not valid. Use the current code from your authenticator app, or a recovery code.', 401); }
-            }
-            q('DELETE FROM rate_limits WHERE k = ?', [$kUser]);
+            $r = authenticate(body());          // password + optional 2FA, lockouts, recovery codes (shared with the OAuth consent page)
+            if (!empty($r['need_2fa'])) json_out(['need_2fa' => true]);
+            $u = $r['user'];
             session_regenerate_id(true);
             $_SESSION['user'] = ['id' => (int)$u['id'], 'name' => $u['name'], 'email' => $u['email'], 'role' => $u['role']];
             $_SESSION['must_change'] = (int)$u['must_change_password'] === 1;
@@ -171,7 +153,7 @@ function route(string $m, string $a, ?string $b, ?string $c): void
                     if ($k === 'smtp_port' && (!ctype_digit($v) || (int)$v < 1 || (int)$v > 65535)) fail('SMTP port must be a number between 1 and 65535');
                     if ($k === 'smtp_enc' && !in_array($v, ['ssl', 'tls', 'none'], true)) fail('Encryption must be ssl, tls or none');
                     if ($k === 'mail_from' && $v !== '' && !filter_var($v, FILTER_VALIDATE_EMAIL)) fail('From address must be a valid e-mail address');
-                    if ($k === 'client_reminders' && !in_array($v, ['0', '1'], true)) fail('Invalid reminder setting');
+                    if (in_array($k, ['client_reminders', 'oauth_enabled'], true) && !in_array($v, ['0', '1'], true)) fail('Invalid on/off setting');
                     if ($k === 'backup_keep' && (!ctype_digit($v) || (int)$v < 1 || (int)$v > 90)) fail('Keep between 1 and 90 backups');
                     if ($k === 'validity_days' && (!ctype_digit($v) || (int)$v < 1 || (int)$v > 365)) fail('Validity must be a whole number of days between 1 and 365');
                     if (($k === 'min_margin' || strpos($k, 'gst_') === 0) && (!is_numeric($v) || (float)$v < 0 || (float)$v > 100)) fail('Percentages must be numbers between 0 and 100');
@@ -260,8 +242,11 @@ function route(string $m, string $a, ?string $b, ?string $c): void
         case 'tokens': // API tokens for AI assistants (MCP) - admin only; the plain token is shown exactly once
             require_admin();
             if ($m === 'GET') {
-                $rows = q('SELECT t.id,t.name,t.prefix,t.scope,t.hide_costs,t.last_used_at,t.expires_at,t.revoked,t.created_at,(SELECT u.name FROM users u WHERE u.id = t.user_id) AS owner FROM api_tokens t ORDER BY t.id DESC LIMIT 100')->fetchAll();
-                foreach ($rows as &$r) { $r['id'] = (int)$r['id']; $r['revoked'] = (int)$r['revoked']; $r['hide_costs'] = (int)$r['hide_costs']; $r['expired'] = $r['expires_at'] && $r['expires_at'] < now(); }
+                // OAuth connections issue a new short-lived token every hour: show each connection once (its newest token)
+                $rows = q('SELECT t.id,t.name,t.prefix,t.scope,t.hide_costs,t.last_used_at,t.expires_at,t.revoked,t.created_at,t.oauth_client,t.grant_id,(SELECT u.name FROM users u WHERE u.id = t.user_id) AS owner,
+                    (SELECT COUNT(*) FROM oauth_refresh r WHERE r.grant_id = t.grant_id AND r.revoked = 0 AND r.expires_at > ?) AS refresh_ok FROM api_tokens t
+                    WHERE t.oauth_client IS NULL OR t.id IN (SELECT m.mid FROM (SELECT MAX(id) AS mid FROM api_tokens WHERE oauth_client IS NOT NULL GROUP BY grant_id) m) ORDER BY t.id DESC LIMIT 100', [time()])->fetchAll();
+                foreach ($rows as &$r) { $r['id'] = (int)$r['id']; $r['revoked'] = (int)$r['revoked']; $r['hide_costs'] = (int)$r['hide_costs']; $r['oauth'] = $r['oauth_client'] !== null; $r['refresh_ok'] = (int)$r['refresh_ok']; $r['expired'] = $r['oauth'] ? (!$r['revoked'] && $r['refresh_ok'] === 0) : ($r['expires_at'] && $r['expires_at'] < now()); unset($r['grant_id']); }
                 json_out($rows);
             }
             if ($m === 'POST') {
@@ -278,6 +263,8 @@ function route(string $m, string $a, ?string $b, ?string $c): void
                 json_out(['id' => $tokenId, 'token' => $plain, 'scope' => $scope], 201);
             }
             if ($m === 'DELETE' && $b !== null) {
+                $tr = q('SELECT grant_id FROM api_tokens WHERE id = ?', [(int)$b])->fetch();
+                if ($tr && $tr['grant_id']) revoke_grant($tr['grant_id']);          // OAuth connection: closes the refresh token too
                 q('UPDATE api_tokens SET revoked = 1 WHERE id = ?', [(int)$b]);
                 audit($user, 'token.revoke', '#' . (int)$b);
                 json_out(['ok' => true]);
