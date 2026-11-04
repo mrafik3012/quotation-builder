@@ -1,0 +1,4 @@
+# Block direct web access to internal PHP files and data. index.php stays public.
+<FilesMatch "^(config|lib|setup)\.php$">
+    Require all denied
+</FilesMatch>

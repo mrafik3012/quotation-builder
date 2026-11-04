@@ -1,0 +1,13 @@
+Options -Indexes
+DirectoryIndex index.html
+
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set Referrer-Policy "same-origin"
+</IfModule>
+
+# Force HTTPS (Hostinger provides free SSL) - uncomment once SSL is active
+# RewriteEngine On
+# RewriteCond %{HTTPS} off
+# RewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [L,R=301]
