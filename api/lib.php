@@ -20,8 +20,15 @@ function json_out($data, int $code = 200): void
     exit;
 }
 
+class ApiFailure extends RuntimeException
+{
+}
+
 function fail(string $msg, int $code = 400): void
 {
+    if (!empty($GLOBALS['FAIL_THROWS'])) { // MCP / internal callers: surface the message instead of ending the request
+        throw new ApiFailure($msg, $code);
+    }
     json_out(['error' => $msg], $code);
 }
 

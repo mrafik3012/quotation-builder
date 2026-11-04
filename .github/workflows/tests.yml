@@ -1,0 +1,26 @@
+name: tests
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env: { MYSQL_ROOT_PASSWORD: root, MYSQL_DATABASE: qb_test }
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot" --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with: { php-version: '8.3', extensions: pdo_mysql, pdo_sqlite, mbstring }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: PHP syntax check
+        run: for f in $(git ls-files '*.php'); do php -l "$f" >/dev/null || exit 1; done
+      - name: JS syntax check
+        run: for f in assets/*.js sw.js tests/*.js; do node --check "$f" || exit 1; done
+      - name: Tests on SQLite
+        run: tests/run.sh
+      - name: Tests on MySQL 8
+        run: MYSQL_HOST=127.0.0.1 MYSQL_DB=qb_test MYSQL_USER=root MYSQL_PASS=root tests/run.sh

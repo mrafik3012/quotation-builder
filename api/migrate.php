@@ -3,7 +3,7 @@ declare(strict_types=1);
 // Lightweight forward-only migrations. Runs automatically (once per version) on the first signed-in request,
 // so already-installed sites upgrade just by uploading the new files.
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 function ensure_schema(): void
 {
@@ -53,6 +53,10 @@ function ensure_schema(): void
         ddl("CREATE TABLE IF NOT EXISTS rate_limits (k VARCHAR(80) NOT NULL PRIMARY KEY, hits INT NOT NULL DEFAULT 0, window_start INT NOT NULL DEFAULT 0)$eng");
         // a quote number + revision must be unique (guards against two people saving at the same instant)
         ddl('CREATE UNIQUE INDEX uq_quote_no_rev ON quotes (quote_no, rev)');
+    }
+    if ($cur < 6) {
+        // API tokens for AI assistants / integrations (MCP). Only a SHA-256 hash of the token is stored.
+        ddl("CREATE TABLE IF NOT EXISTS api_tokens (id $pk, name VARCHAR(120) NOT NULL, token_hash CHAR(64) NOT NULL UNIQUE, prefix VARCHAR(16) NOT NULL, scope VARCHAR(10) NOT NULL DEFAULT 'read', hide_costs TINYINT NOT NULL DEFAULT 1, user_id INT NULL, last_used_at VARCHAR(19), expires_at VARCHAR(19), revoked TINYINT NOT NULL DEFAULT 0, created_at VARCHAR(19) NOT NULL)$eng");
     }
     set_setting('schema_v', (string)SCHEMA_VERSION);
 }

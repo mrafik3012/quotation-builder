@@ -39,6 +39,26 @@ New installs get ~490 indicative line items across the four divisions (Sheet Roo
 Already installed? Open **Rate Cards -> Import CSV** and pick `docs/rate-cards-extended.csv` (it appends; delete duplicates you do not want).
 All rates are placeholders - replace them with your real costs.
 
+## Use it from Claude / AI tools (MCP)
+The app is also an **MCP server** (`api/mcp.php`): AI assistants can search quotes and rate cards, price roofs (GI / UPVC / PUF / aluminium), and *draft* quotations - never send, accept, delete or change settings. Admin creates a scoped, expiring, revocable token in **Settings -> AI assistants**. Setup for Claude Code, Claude Desktop, Cursor and VS Code: [docs/MCP.md](docs/MCP.md).
+
+## Production checklist
+1. HTTPS on, then uncomment the redirect in `.htaccess`. Delete `install.php` after installing.
+2. Settings: company details, GSTIN, bank details, terms, payment schedules, HSN/SAC codes (have your CA confirm the GST setup).
+3. Replace the starter rates **and costs** with your real numbers (Rate Cards).
+4. Enable automatic backups in Hostinger hPanel; also download the JSON backup (Settings) before every upgrade.
+5. Create staff users with the *Staff* role (they cannot change rates, settings, tokens or see the audit log).
+6. Upgrading: upload the new files, then sign in once as admin - the database upgrades itself (`api/migrate.php`).
+7. Run a few real quotes end to end (create -> share -> accept -> project -> invoice) and compare against your current method before relying on it.
+
+## Tests
+```
+tests/run.sh            # money-math + roof parity (browser vs server), API workflows, MCP - on a throw-away SQLite install
+tests/run.sh --e2e      # + Playwright browser tests (XSS, mobile layout, permissions, totals)
+MYSQL_DB=... MYSQL_USER=... MYSQL_PASS=... tests/run.sh   # same, against MySQL (empty database)
+```
+GitHub Actions runs the suite on SQLite and MySQL 8 for every push (`.github/workflows/tests.yml`).
+
 ## Notes
 - The bundled rates, terms and payment schedules are **indicative starting values** — review them before sending quotes to clients.
 - PDF is produced by the browser (Print → Save as PDF). Turn off "Headers and footers" in the print dialog.
@@ -59,7 +79,13 @@ assets/app.js         core, dashboard, quotes list, clients, rate cards, setting
 assets/editor.js      quote editor, PMC calculator, printable quotation
 assets/style.css
 api/index.php         JSON API
-api/lib.php           helpers, totals, quote numbering
+api/lib.php           helpers, money maths, rate limiting, quote numbering
+api/core.php          shared business logic (quotes, rates, reports, roof calculator)
+api/mcp.php           MCP server for AI assistants
+api/public.php        client share-link endpoint (view / accept / decline)
+api/projects.php      projects, milestones, payments, invoices
+api/migrate.php       automatic database upgrades
+tests/                API, MCP, parity and browser tests
 api/setup.php         schema + starter data (used by the installer)
 install.php           one-time installer (delete after use)
 ```
