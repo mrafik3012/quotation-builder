@@ -7,7 +7,7 @@ a{color:var(--gold2);text-decoration:none}a:hover{text-decoration:underline}
 .shell{display:flex;min-height:100vh}
 .side{width:230px;background:var(--side);color:#cbd5e1;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;flex-shrink:0}
 .side .brand{padding:18px 18px 14px;border-bottom:1px solid var(--brand);display:flex;flex-direction:column;gap:2px}
-.side .brand b{color:var(--gold2);font-size:17px}.side .brand small{color:#8a7a4a}.side .brand .logo{width:100%;max-width:190px;height:auto;margin-bottom:8px}
+.side .brand b{color:var(--gold2);font-size:17px}.side .brand small{color:#8a7a4a}.side .brand .logo{width:100%;max-width:170px;height:auto;margin-bottom:8px;border-radius:6px}
 .side .brand img{max-height:38px;max-width:150px;object-fit:contain;align-self:flex-start;margin-bottom:6px;background:#fff;padding:3px;border-radius:5px}
 .side nav{flex:1;padding:10px}
 .side nav a{display:block;padding:9px 12px;border-radius:8px;color:#cfc6ab;margin-bottom:2px;font-weight:500}
@@ -89,7 +89,7 @@ table{border-collapse:collapse;width:100%}
 #toasts{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:100}
 .toast{background:#000;border:1px solid var(--brand);color:var(--gold2);padding:10px 16px;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.25);max-width:340px}
 .toast.err{background:#5a1616;color:#fff}.toast.ok{background:#14361f;color:#fff}
-.login{max-width:380px;margin:9vh auto;background:var(--card);border:1px solid var(--brand-d);padding:28px;border-radius:14px;box-shadow:0 0 40px rgba(212,175,55,.12)}.login .logo{display:block;width:100%;max-width:260px;margin:0 auto 18px}
+.login{max-width:380px;margin:9vh auto;background:var(--card);border:1px solid var(--brand-d);padding:28px;border-radius:14px;box-shadow:0 0 40px rgba(212,175,55,.12)}.login .logo{display:block;width:100%;max-width:240px;margin:0 auto 14px;border-radius:8px}
 .login h1{margin:0 0 4px;font-size:22px;color:var(--gold2)}
 .pmc-modes{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
 .pmc-modes label{border:1px solid #3a3320;border-radius:8px;padding:7px 12px;cursor:pointer;font-weight:600}

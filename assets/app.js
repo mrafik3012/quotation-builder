@@ -93,7 +93,7 @@ async function init() {
     await loadBootstrap();
     route();
   } catch (e) {
-    $('#app').innerHTML = `<div class="login"><img class="logo" src="assets/logo.svg" alt="Infraura"><h1>Quotation Builder</h1><p class="muted">${esc(e.message)}</p></div>`;
+    $('#app').innerHTML = `<div class="login"><img class="logo" src="assets/logo.png" alt="Infraura"><h1>Quotation Builder</h1><p class="muted">${esc(e.message)}</p></div>`;
   }
 }
 async function loadBootstrap() {
@@ -102,7 +102,7 @@ async function loadBootstrap() {
 }
 function showLogin() {
   document.body.classList.remove('printmode');
-  $('#app').innerHTML = `<form class="login" id="lf"><img class="logo" src="assets/logo.svg" alt="Infraura"><h1>Quotation Builder</h1><p class="muted" style="margin:0 0 16px">Sign in to continue</p>
+  $('#app').innerHTML = `<form class="login" id="lf"><img class="logo" src="assets/logo.png" alt="Infraura"><h1>Quotation Builder</h1><p class="muted" style="margin:0 0 16px">Sign in to continue</p>
   <label class="f"><span>Email</span><input type="email" name="email" required autofocus autocomplete="username"></label>
   <label class="f"><span>Password</span><input type="password" name="password" required autocomplete="current-password"></label>
   <button class="btn pri" style="width:100%;justify-content:center">Sign in</button></form>`;
@@ -120,7 +120,7 @@ async function logout() { await guard(() => api('auth/logout', 'POST')); S.user 
 /* ---------- layout & router ---------- */
 let lastHash = '';
 function layout() {
-  const s = S.settings, logo = s.company_logo ? `<img src="${esc(s.company_logo)}" alt="">` : '<img class="logo" src="assets/logo.svg" alt="Infraura">';
+  const s = S.settings, logo = s.company_logo ? `<img src="${esc(s.company_logo)}" alt="">` : '<img class="logo" src="assets/logo.png" alt="Infraura">';
   $('#app').innerHTML = `<div class="shell"><aside class="side noprint"><div class="brand">${logo}<b>${esc(s.company_name || 'Infraura')}</b><small>Quotation Builder</small></div>
   <nav><a href="#/dashboard" data-n="dashboard">Dashboard</a><a href="#/quotes" data-n="quotes">Quotes</a><a href="#/clients" data-n="clients">Clients</a><a href="#/rates" data-n="rates">Rate Cards</a><a href="#/settings" data-n="settings">Settings</a></nav>
   <div class="userbox">${esc(S.user.name)}<br>${esc(S.user.email)}<button id="lo">Sign out</button></div></aside><main class="main"><div id="view"></div></main></div>`;
