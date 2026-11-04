@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/lib.php';
+require __DIR__ . '/migrate.php';
 start_session();
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -61,6 +62,7 @@ function route(string $m, string $a, ?string $b, ?string $c): void
     }
 
     $user = require_auth();
+    ensure_schema();
 
     switch ($a) {
         case 'bootstrap': // everything the UI needs after login
@@ -69,6 +71,7 @@ function route(string $m, string $a, ?string $b, ?string $c): void
                 'settings' => all_settings(),
                 'clients' => q('SELECT id,name,contact_person,phone,email,address,gstin FROM clients ORDER BY name')->fetchAll(),
                 'rates' => rates_list(),
+                'templates' => templates_list(),
                 'divisions' => DIVISIONS,
             ]);
 
@@ -120,6 +123,10 @@ function route(string $m, string $a, ?string $b, ?string $c): void
             rates_route($m, $b);
             break;
 
+        case 'templates':
+            templates_route($m, $b);
+            break;
+
         case 'quotes':
             quotes_route($m, $b, $c, $user);
             break;
@@ -169,7 +176,7 @@ function clients_route(string $m, ?string $b): void
 // ---------------- rates ----------------
 function rates_list(?string $division = null): array
 {
-    $sql = 'SELECT id,division,category,name,unit,rate,description,active,sort FROM rate_items';
+    $sql = 'SELECT id,division,category,name,unit,rate,cost,description,active,sort FROM rate_items';
     $p = [];
     if ($division) {
         $sql .= ' WHERE division = ?';
@@ -179,6 +186,7 @@ function rates_list(?string $division = null): array
     foreach ($rows as &$r) {
         $r['id'] = (int)$r['id'];
         $r['rate'] = (float)$r['rate'];
+        $r['cost'] = (float)$r['cost'];
         $r['active'] = (int)$r['active'];
     }
     return $rows;
@@ -190,7 +198,7 @@ function rate_fields(array $d): array
     if (!isset(DIVISIONS[$div])) fail('Invalid division');
     $name = str($d['name'] ?? '', 255);
     if ($name === '') fail('Item name is required');
-    return [$div, str($d['category'] ?? '', 120), $name, str($d['unit'] ?? '', 30), round(num($d['rate'] ?? 0), 2), str($d['description'] ?? '', 1000), empty($d['active']) && array_key_exists('active', $d) ? 0 : 1];
+    return [$div, str($d['category'] ?? '', 120), $name, str($d['unit'] ?? '', 30), round(num($d['rate'] ?? 0), 2), str($d['description'] ?? '', 1000), empty($d['active']) && array_key_exists('active', $d) ? 0 : 1, round(max(num($d['cost'] ?? 0), 0), 2)];
 }
 
 function rates_route(string $m, ?string $b): void
@@ -206,7 +214,7 @@ function rates_route(string $m, ?string $b): void
         foreach ($items as $it) {
             if (!is_array($it)) continue;
             $f = rate_fields($it);
-            q('INSERT INTO rate_items (division,category,name,unit,rate,description,active,sort) VALUES (?,?,?,?,?,?,?,9999)', $f);
+            q('INSERT INTO rate_items (division,category,name,unit,rate,description,active,cost,sort) VALUES (?,?,?,?,?,?,?,?,9999)', $f);
             $n++;
         }
         db()->commit();
@@ -214,16 +222,49 @@ function rates_route(string $m, ?string $b): void
     }
     if ($m === 'POST') {
         $f = rate_fields(body());
-        q('INSERT INTO rate_items (division,category,name,unit,rate,description,active,sort) VALUES (?,?,?,?,?,?,?,9999)', $f);
+        q('INSERT INTO rate_items (division,category,name,unit,rate,description,active,cost,sort) VALUES (?,?,?,?,?,?,?,?,9999)', $f);
         json_out(['id' => (int)db()->lastInsertId()], 201);
     }
     if ($m === 'PUT' && $b !== null) {
         $f = rate_fields(body());
-        q('UPDATE rate_items SET division=?,category=?,name=?,unit=?,rate=?,description=?,active=? WHERE id=?', array_merge($f, [(int)$b]));
+        q('UPDATE rate_items SET division=?,category=?,name=?,unit=?,rate=?,description=?,active=?,cost=? WHERE id=?', array_merge($f, [(int)$b]));
         json_out(['ok' => true]);
     }
     if ($m === 'DELETE' && $b !== null) {
         q('DELETE FROM rate_items WHERE id = ?', [(int)$b]);
+        json_out(['ok' => true]);
+    }
+    fail('Not found', 404);
+}
+
+// ---------------- templates ----------------
+function templates_list(): array
+{
+    $rows = q('SELECT id,name,division,data FROM quote_templates ORDER BY division, name')->fetchAll();
+    foreach ($rows as &$r) {
+        $r['id'] = (int)$r['id'];
+        $r['data'] = json_decode((string)$r['data'], true) ?: new stdClass();
+    }
+    return $rows;
+}
+
+function templates_route(string $m, ?string $b): void
+{
+    if ($m === 'GET') json_out(templates_list());
+    if ($m === 'POST') {
+        $d = body();
+        $div = (string)($d['division'] ?? '');
+        if (!isset(DIVISIONS[$div])) fail('Invalid division');
+        $name = str($d['name'] ?? '', 190);
+        if ($name === '') fail('Template name is required');
+        $x = is_array($d['data'] ?? null) ? $d['data'] : [];
+        $data = ['sections' => clean_sections($x['sections'] ?? []), 'terms' => array_values(array_filter(array_map(fn($t) => is_string($t) ? mb_substr(trim($t), 0, 600) : '', is_array($x['terms'] ?? null) ? $x['terms'] : []), 'strlen')),
+            'scope' => str($x['scope'] ?? '', 3000), 'notes' => str($x['notes'] ?? '', 3000)];
+        q('INSERT INTO quote_templates (name,division,data,created_at) VALUES (?,?,?,?)', [$name, $div, json_encode($data, JSON_UNESCAPED_UNICODE), now()]);
+        json_out(['id' => (int)db()->lastInsertId()], 201);
+    }
+    if ($m === 'DELETE' && $b !== null) {
+        q('DELETE FROM quote_templates WHERE id = ?', [(int)$b]);
         json_out(['ok' => true]);
     }
     fail('Not found', 404);
@@ -256,7 +297,7 @@ function clean_sections($in): array
             if (!is_array($it)) continue;
             $items[] = [
                 'desc' => str($it['desc'] ?? '', 1000), 'unit' => str($it['unit'] ?? '', 30),
-                'qty' => num($it['qty'] ?? 0), 'rate' => num($it['rate'] ?? 0), 'note' => str($it['note'] ?? '', 500),
+                'qty' => num($it['qty'] ?? 0), 'rate' => num($it['rate'] ?? 0), 'cost' => max(num($it['cost'] ?? 0), 0), 'note' => str($it['note'] ?? '', 500),
             ];
         }
         $secs[] = ['title' => str($s['title'] ?? '', 190), 'items' => $items];

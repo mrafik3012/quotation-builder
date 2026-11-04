@@ -87,11 +87,13 @@ function drawEditor() {
    ${isNew || ro ? '' : `<select id="stsel" style="width:auto"><option disabled>Status…</option>${['draft', 'sent', 'accepted', 'rejected'].map(k => `<option value="${k}" ${Q.status === k ? 'selected' : ''}>${STATUS_LABEL[k]}</option>`).join('')}</select>`}
    <span class="sp"></span>
    ${isNew || ro ? '' : '<button class="btn" data-act="revise">New revision</button>'}
+   ${ro ? '' : '<button class="btn" data-act="savetpl" title="Reuse these sections on future quotes">Save as template</button>'}
    ${isNew ? '' : '<button class="btn" data-act="dup">Duplicate</button>'}
    ${isNew || Q.status !== 'draft' ? '' : '<button class="btn dng" data-act="del">Delete</button>'}
   </div>
   ${ro ? `<div class="banner">This is Rev ${Q.rev}, which has been superseded and is read-only. <a href="#" data-act="latest">Open the latest revision</a>.</div>` : ''}
   <fieldset ${ro ? 'disabled' : ''}>
+  ${isNew ? tplBar() : ''}
   <div class="grid2">
    <div class="card"><h3>Client</h3>
     <label class="f"><span>Saved client</span><select id="clientsel"><option value="">— Type new client below —</option>${S.clients.map(c => `<option value="${c.id}" ${Q.client_id == c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
@@ -119,7 +121,7 @@ function drawEditor() {
     <label class="f"><span>GST %</span><input type="number" step="any" min="0" data-b="data.tax_rate" value="${esc(Q.data.tax_rate)}"></label></div>
     <label class="row small" style="gap:6px;margin-bottom:10px"><input type="checkbox" data-b="data.round_off" ${Q.data.round_off ? 'checked' : ''}> Round off grand total to nearest rupee</label>
     <table class="totals"><tr><td>Subtotal</td><td id="t-sub"></td></tr><tr><td>Discount</td><td id="t-disc"></td></tr><tr><td>Taxable amount</td><td id="t-taxable"></td></tr><tr><td id="t-gstl">GST</td><td id="t-tax"></td></tr><tr id="t-rorow"><td>Round off</td><td id="t-ro"></td></tr><tr class="g"><td>Grand total</td><td id="t-total"></td></tr></table>
-    <p class="muted small" id="t-words" style="margin:8px 0 0"></p></div>
+    <p class="muted small" id="t-words" style="margin:8px 0 0"></p><div id="marginbox" class="noprint" style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)"></div></div>
    <div class="card"><h3>Payment schedule</h3><div id="paybox"></div></div>
   </div>
   <div class="grid2"><div class="card"><h3>Terms &amp; conditions (one per line)</h3><textarea data-b="terms_text" rows="9">${esc(Q.data.terms.join('\n'))}</textarea></div>
@@ -128,6 +130,31 @@ function drawEditor() {
   ${Q.revisions && Q.revisions.length > 1 ? `<div class="card noprint"><h3>Revision history</h3>${Q.revisions.map(r => `<div class="row" style="margin-bottom:4px"><a href="#/quotes/${r.id}">Rev ${r.rev}</a>${statusChip(r.status)}<span class="muted small">${esc(r.updated_at)}</span><span class="sp"></span><b>${inr0(r.total)}</b></div>`).join('')}</div>` : ''}`;
   drawPmc(); drawSections(); drawOptions(); drawPay(); recalc();
   wireEditor();
+}
+
+function tplBar() {
+  const list = (S.templates || []).filter(t => t.division === Q.division);
+  if (!list.length) return '';
+  return `<div class="card noprint"><h3>Start from a template</h3><div class="row"><select id="tplsel" style="max-width:360px">${list.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select><button type="button" class="btn" data-act="usetpl">Load template</button><span class="muted small">Fills the sections below - edit quantities and rates as needed. Save your own with “Save as template”.</span></div></div>`;
+}
+function useTemplate() {
+  const t = (S.templates || []).find(x => x.id == $('#tplsel').value); if (!t) return;
+  if (Q.data.sections.some(s => s.items.length) && !confirmBox('Replace the current sections with this template?')) return;
+  const d = JSON.parse(JSON.stringify(t.data || {}));
+  Q.data.sections = Array.isArray(d.sections) && d.sections.length ? d.sections : Q.data.sections;
+  if (Array.isArray(d.terms) && d.terms.length) Q.data.terms = d.terms;
+  if (d.scope) Q.data.scope = d.scope;
+  if (d.notes) Q.data.notes = d.notes;
+  markDirty(); drawEditor(); toast('Template loaded', 'ok');
+}
+function saveTemplate() {
+  const name = window.prompt('Template name (e.g. "40x100 ft godown - GI roof")', Q.title || '');
+  if (!name || !name.trim()) return;
+  guard(async () => {
+    const d = Q.data;
+    await api('templates', 'POST', { name: name.trim(), division: Q.division, data: { sections: d.sections, terms: d.terms, scope: d.scope, notes: d.notes } });
+    S.templates = await api('templates'); toast('Template saved', 'ok');
+  });
 }
 
 function drawPmc() {
@@ -152,10 +179,10 @@ function secHtml(si) {
   const s = Q.data.sections[si];
   return `<div class="sec" data-s="${si}"><div class="sec-h"><span class="muted">${si + 1}.</span><input data-sf="title" value="${esc(s.title)}" placeholder="Section title">
    <span class="muted small nw" id="ss-${si}"></span>${Q.data.sections.length > 1 ? '<button class="btn sm dng" data-act="delsec" title="Remove section">✕</button>' : ''}</div>
-  <div class="scroll"><table class="items"><thead><tr><th>#</th><th>Description</th><th>Unit</th><th>Qty</th><th>Rate (₹)</th><th class="r">Amount (₹)</th><th></th></tr></thead><tbody>
+  <div class="scroll"><table class="items"><thead><tr><th>#</th><th>Description</th><th>Unit</th><th>Qty</th><th>Rate (₹)</th><th title="Internal - never printed">Cost (₹)</th><th class="r">Amount (₹)</th><th></th></tr></thead><tbody>
   ${s.items.map((it, ii) => `<tr data-i="${ii}"><td class="muted" style="width:38px;padding-top:11px">${si + 1}.${ii + 1}</td>
    <td><textarea data-f="desc" rows="1">${esc(it.desc)}</textarea></td><td style="width:84px"><input data-f="unit" list="units" value="${esc(it.unit)}"></td>
-   <td style="width:96px"><input data-f="qty" type="number" step="any" min="0" value="${esc(it.qty)}"></td><td style="width:116px"><input data-f="rate" type="number" step="any" min="0" value="${esc(it.rate)}"></td>
+   <td style="width:96px"><input data-f="qty" type="number" step="any" min="0" value="${esc(it.qty)}"></td><td style="width:116px"><input data-f="rate" type="number" step="any" min="0" value="${esc(it.rate)}"></td><td style="width:100px"><input data-f="cost" type="number" step="any" min="0" value="${esc(it.cost ?? '')}" title="Your cost - internal only" style="color:var(--mut)"></td>
    <td class="amt" style="width:120px" id="a-${si}-${ii}"></td><td style="width:34px"><button class="btn sm dng" data-act="delitem" title="Remove">✕</button></td></tr>`).join('')}
   </tbody></table></div>
   <div class="sec-f"><button class="btn sm" data-act="addrate">+ From rate card</button><button class="btn sm" data-act="additem">+ Custom item</button></div></div>`;
@@ -191,8 +218,19 @@ function recalc() {
   d.payment_schedule.forEach((p, i) => { pp += n(p.percent); const e = $(`#pa-${i}`); if (e) e.textContent = inr(r2(t.total * n(p.percent) / 100)); });
   const pt = $('#paytot');
   if (pt) { pt.textContent = `Total ${r2(pp)}%`; pt.style.color = d.payment_schedule.length && Math.abs(pp - 100) > 0.01 ? 'var(--bad)' : 'var(--ok)'; pt.title = Math.abs(pp - 100) > 0.01 ? 'Stages should add up to 100%' : ''; }
+  drawMargin(d, t);
   const rsq = $('#rsq'), area = n(d.area_sqft);
   if (rsq) rsq.textContent = area > 0 && t.sub > 0 ? `≈ ${inr0(t.total / area)} per sq ft (incl. GST) on ${area} sq ft` : '';
+}
+
+function drawMargin(d, t) {
+  const box = $('#marginbox'); if (!box) return;
+  let cost = 0, rev = 0, missing = 0;
+  effSections(d).forEach(s => s.items.forEach(it => { const a = n(it.qty) * n(it.rate); if (a <= 0) return; if (n(it.cost) > 0) { cost += n(it.qty) * n(it.cost); rev += a; } else missing++; }));
+  if (rev <= 0) { box.innerHTML = '<span class="muted small">Internal margin: add costs to line items (or rate cards) to see your margin. Never printed.</span>'; return; }
+  const net = rev * (t.sub > 0 ? t.taxable / t.sub : 1), m = net - cost, pct = net > 0 ? m / net * 100 : 0, min = n(S.settings.min_margin);
+  const low = min > 0 && pct < min;
+  box.innerHTML = `<div class="small"><b>Internal margin</b> <span class="muted">(never printed)</span><br>Cost ${inr0(cost)} · Margin <b class="${low ? 'bad' : 'good'}">${inr0(m)} (${pct.toFixed(1)}%)</b>${low ? ` <span class="bad">— below your ${min}% target</span>` : ''}${missing ? `<br><span class="muted">${missing} line(s) have no cost and are excluded.</span>` : ''}</div>`;
 }
 
 /* ---------- events ---------- */
@@ -239,10 +277,12 @@ function wireEditor() {
     if (a.startsWith('opt')) { if (a !== 'optsel') optionsClick(a, t); return; }
     if (a === 'latest') { e.preventDefault(); const l = Q.revisions.find(r => r.status !== 'superseded') || Q.revisions[0]; if (l) location.hash = '#/quotes/' + l.id; }
     else if (a === 'save') guard(saveQuote);
+    else if (a === 'usetpl') useTemplate();
+    else if (a === 'savetpl') saveTemplate();
     else if (a === 'roofcalc') openRoofCalc();
     else if (a === 'addsec') { Q.data.sections.push({ title: '', items: [] }); markDirty(); drawSections(); }
     else if (a === 'delsec') { const s = Q.data.sections[si]; if (!s.items.length || confirmBox('Remove this section and its items?')) { Q.data.sections.splice(si, 1); markDirty(); drawSections(); } }
-    else if (a === 'additem') { Q.data.sections[si].items.push({ desc: '', unit: '', qty: 1, rate: '' }); markDirty(); drawSections(); const ts = $$('#sections .sec')[si].querySelectorAll('textarea'); if (ts.length) ts[ts.length - 1].focus(); }
+    else if (a === 'additem') { Q.data.sections[si].items.push({ desc: '', unit: '', qty: 1, rate: '', cost: '' }); markDirty(); drawSections(); const ts = $$('#sections .sec')[si].querySelectorAll('textarea'); if (ts.length) ts[ts.length - 1].focus(); }
     else if (a === 'delitem') { Q.data.sections[si].items.splice(+t.closest('tr').dataset.i, 1); markDirty(); drawSections(); }
     else if (a === 'addrate') pickRates(si);
     else if (a === 'addpay') { Q.data.payment_schedule.push({ label: '', percent: '' }); markDirty(); drawPay(); }
@@ -291,7 +331,7 @@ function pickRates(si, opt) {
   $('#pl', m.el).onclick = e => {
     const it = e.target.closest('.it'); if (!it) return;
     const r = S.rates.find(x => x.id == it.dataset.id);
-    const row = { desc: r.name, unit: r.unit, qty: 1, rate: r.rate };
+    const row = { desc: r.name, unit: r.unit, qty: 1, rate: r.rate, cost: r.cost || '' };
     if (opt) { Q.data.options[opt.oi].sections[opt.si].items.push(row); it.classList.add('added'); markDirty(); drawOptions(); recalc(); return; }
     Q.data.sections[si].items.push(row);
     it.classList.add('added'); markDirty(); drawSections();

@@ -98,7 +98,7 @@ async function init() {
 }
 async function loadBootstrap() {
   const b = await api('bootstrap');
-  S.user = b.user; S.settings = b.settings; S.clients = b.clients; S.rates = b.rates;
+  S.user = b.user; S.settings = b.settings; S.clients = b.clients; S.rates = b.rates; S.templates = b.templates || [];
 }
 function showLogin() {
   document.body.classList.remove('printmode');
@@ -291,12 +291,12 @@ async function pageRates() {
   <div class="card"><div class="tabs">${Object.entries(DIVS).map(([k, l]) => `<button data-act="tab" data-d="${k}" class="${k === RF.div ? 'on' : ''}">${l} <span class="muted small">${S.rates.filter(r => r.division === k).length}</span></button>`).join('')}</div>
   <input id="rs" placeholder="Search items…" value="${esc(RF.q)}" style="max-width:280px;margin-bottom:12px">
   <p class="muted small" style="margin:0 0 10px">Rates shown are indicative starting values — edit them to your actual costs. Items you mark inactive stay saved but are hidden from the quote picker.</p>
-  <div class="scroll"><table class="tbl"><thead><tr><th>Category</th><th>Item</th><th>Unit</th><th class="r">Rate (₹)</th><th></th></tr></thead><tbody id="rb"></tbody></table></div></div>`;
+  <div class="scroll"><table class="tbl"><thead><tr><th>Category</th><th>Item</th><th>Unit</th><th class="r">Rate (₹)</th><th class="r">Cost (₹)</th><th class="r">Margin</th><th></th></tr></thead><tbody id="rb"></tbody></table></div></div>`;
   const draw = () => {
     const f = RF.q.toLowerCase();
     const rows = S.rates.filter(r => r.division === RF.div && (!f || (r.name + r.category).toLowerCase().includes(f)));
-    $('#rb').innerHTML = rows.map(r => `<tr style="${r.active ? '' : 'opacity:.5'}"><td class="muted nw">${esc(r.category)}</td><td>${esc(r.name)}${r.description ? `<div class="muted small">${esc(r.description)}</div>` : ''}</td><td>${esc(r.unit)}</td><td class="r nw"><b>${fmt(r.rate)}</b></td>
-    <td class="nw r"><button class="btn sm" data-act="edit" data-id="${r.id}">Edit</button> <button class="btn sm dng" data-act="del" data-id="${r.id}">Delete</button></td></tr>`).join('') || '<tr><td colspan="5" class="muted">No items. Add one or import a CSV.</td></tr>';
+    $('#rb').innerHTML = rows.map(r => `<tr style="${r.active ? '' : 'opacity:.5'}"><td class="muted nw">${esc(r.category)}</td><td>${esc(r.name)}${r.description ? `<div class="muted small">${esc(r.description)}</div>` : ''}</td><td>${esc(r.unit)}</td><td class="r nw"><b>${fmt(r.rate)}</b></td><td class="r nw muted">${r.cost ? fmt(r.cost) : '—'}</td><td class="r nw">${r.cost && r.rate ? `<span class="${(r.rate - r.cost) / r.rate * 100 < n(S.settings.min_margin) ? 'bad' : ''}">${Math.round((r.rate - r.cost) / r.rate * 100)}%</span>` : '—'}</td>
+    <td class="nw r"><button class="btn sm" data-act="edit" data-id="${r.id}">Edit</button> <button class="btn sm dng" data-act="del" data-id="${r.id}">Delete</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No items. Add one or import a CSV.</td></tr>';
   };
   draw();
   $('#rs').oninput = e => { RF.q = e.target.value; draw(); };
@@ -308,11 +308,11 @@ async function pageRates() {
       if (!rows.length) throw new Error('The file is empty');
       const head = rows[0].map(h => h.trim().toLowerCase());
       const hasHead = head.includes('name');
-      const idx = k => hasHead ? head.indexOf(k) : ['division', 'category', 'name', 'unit', 'rate', 'description'].indexOf(k);
+      const idx = k => hasHead ? head.indexOf(k) : ['division', 'category', 'name', 'unit', 'rate', 'description', 'cost'].indexOf(k);
       const items = rows.slice(hasHead ? 1 : 0).map(r => {
         const dv = (r[idx('division')] || RF.div).trim().toLowerCase().replace(/\s+/g, '');
         const division = { sheetroofing: 'roofing' }[dv] || dv;
-        return { division, category: r[idx('category')] || '', name: (r[idx('name')] || '').trim(), unit: r[idx('unit')] || '', rate: n(String(r[idx('rate')] || '').replace(/,/g, '')), description: idx('description') >= 0 ? (r[idx('description')] || '') : '' };
+        return { division, category: r[idx('category')] || '', name: (r[idx('name')] || '').trim(), unit: r[idx('unit')] || '', rate: n(String(r[idx('rate')] || '').replace(/,/g, '')), description: idx('description') >= 0 ? (r[idx('description')] || '') : '', cost: idx('cost') >= 0 ? n(String(r[idx('cost')] || '').replace(/,/g, '')) : 0 };
       }).filter(x => x.name);
       if (!items.length) throw new Error('No valid rows found. Columns needed: division, category, name, unit, rate, description');
       const res = await api('rates/import', 'POST', { items });
@@ -329,7 +329,7 @@ async function pageRates() {
     else if (a === 'del') { const r = S.rates.find(x => x.id == t.dataset.id); if (confirmBox(`Delete "${r.name}"? Existing quotes are not affected.`)) guard(async () => { await api('rates/' + r.id, 'DELETE'); toast('Deleted', 'ok'); pageRates(); }); }
     else if (a === 'imp') $('#fi').click();
     else if (a === 'exp') {
-      const lines = [['division', 'category', 'name', 'unit', 'rate', 'description'].join(',')].concat(S.rates.filter(r => r.division === RF.div).map(r => [r.division, r.category, r.name, r.unit, r.rate, r.description].map(csvCell).join(',')));
+      const lines = [['division', 'category', 'name', 'unit', 'rate', 'description', 'cost'].join(',')].concat(S.rates.filter(r => r.division === RF.div).map(r => [r.division, r.category, r.name, r.unit, r.rate, r.description, r.cost].map(csvCell).join(',')));
       download(`rate-card-${RF.div}.csv`, lines.join('\n'));
     }
   };
@@ -339,7 +339,8 @@ function rateModal(r) {
   const m = openModal(`<h2>${r.id ? 'Edit' : 'New'} rate item</h2><form id="rf">
   <div class="grid2"><label class="f"><span>Division</span><select name="division">${divOptions(r.division)}</select></label><label class="f"><span>Category</span><input name="category" list="cats" value="${esc(r.category)}"><datalist id="cats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label></div>
   <label class="f"><span>Item description *</span><input name="name" required value="${esc(r.name)}"></label>
-  <div class="grid2"><label class="f"><span>Unit</span><input name="unit" list="units" value="${esc(r.unit)}"><datalist id="units">${UNITS.map(u => `<option value="${u}">`).join('')}</datalist></label><label class="f"><span>Rate (₹) *</span><input name="rate" type="number" step="0.01" min="0" required value="${r.rate ?? ''}"></label></div>
+  <div class="grid2"><label class="f"><span>Unit</span><input name="unit" list="units" value="${esc(r.unit)}"><datalist id="units">${UNITS.map(u => `<option value="${u}">`).join('')}</datalist></label><label class="f"><span>Selling rate (₹) *</span><input name="rate" type="number" step="0.01" min="0" required value="${r.rate ?? ''}"></label></div>
+  <label class="f"><span>Your cost (₹) — internal, never printed; used for margin tracking</span><input name="cost" type="number" step="0.01" min="0" value="${r.cost ?? ''}"></label>
   <label class="f"><span>Notes (optional)</span><input name="description" value="${esc(r.description)}"></label>
   <label class="row small" style="gap:6px;margin-bottom:12px"><input type="checkbox" name="active" ${r.active === 0 ? '' : 'checked'}> Active (shown in quote picker)</label>
   <div class="row end"><button type="button" class="btn" id="x">Cancel</button><button class="btn pri">Save</button></div></form>`);
@@ -378,11 +379,12 @@ async function pageSettings() {
   <div>${inp('company_phone', 'Phone')}${inp('company_email', 'Email', 'email')}${inp('company_gstin', 'GSTIN')}${inp('signatory', 'Authorised signatory name')}</div></div>
   <div class="row"><div id="lg">${s.company_logo ? `<img src="${esc(s.company_logo)}" style="max-height:60px;background:#f1f5f9;padding:4px;border-radius:6px">` : '<span class="muted small">No logo</span>'}</div>
   <label class="btn sm">Upload logo<input type="file" id="logo" accept="image/png,image/jpeg" hidden></label><button type="button" class="btn sm" data-act="rmlogo">Remove</button></div></div>
-  <div class="card"><h3>Quote defaults</h3><div class="grid3">${inp('quote_prefix', 'Quote number prefix')}${inp('validity_days', 'Validity (days)', 'number')}<span></span>
+  <div class="card"><h3>Quote defaults</h3><div class="grid3">${inp('quote_prefix', 'Quote number prefix')}${inp('validity_days', 'Validity (days)', 'number')}${inp('min_margin', 'Low-margin alert below (%)', 'number')}
   ${Object.entries(DIVS).map(([k, l]) => inp('gst_' + k, 'GST % — ' + l, 'number')).join('')}</div></div>
   <div class="card"><h3>Bank details (printed on quotations)</h3>${ta('bank_details', 'Bank details', 5)}</div>
   <div class="card"><h3>Default terms &amp; conditions (one per line)</h3><div class="grid2">${Object.entries(DIVS).map(([k, l]) => ta('terms_' + k, l, 8)).join('')}</div></div>
   <div class="card"><h3>Default payment schedule — one stage per line as "Stage name|percent"</h3><div class="grid2">${Object.entries(DIVS).map(([k, l]) => ta('pay_' + k, l, 5)).join('')}</div></div></fieldset>
+  <div class="card"><h3>Quote templates</h3>${(S.templates || []).length ? `<table class="tbl"><tbody>${S.templates.map(t => `<tr><td><b>${esc(t.name)}</b></td><td>${divChip(t.division)}</td><td class="r">${admin ? `<button class="btn sm dng" data-act="deltpl" data-id="${t.id}">Delete</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted small" style="margin:0">No templates yet. Open any quote and click “Save as template”.</p>'}</div>
   <div class="grid2"><div class="card"><h3>Change my password</h3><form id="pw"><label class="f"><span>Current password</span><input type="password" name="current" required></label><label class="f"><span>New password (min 8)</span><input type="password" name="new" minlength="8" required></label><button class="btn">Update password</button></form></div>
   ${admin ? `<div class="card"><h3>Team</h3><div id="ul"></div><form id="uf" style="margin-top:12px"><div class="grid2"><label class="f"><span>Name</span><input name="name" required></label><label class="f"><span>Email</span><input name="email" type="email" required></label><label class="f"><span>Password</span><input name="password" type="password" minlength="8" required></label><label class="f"><span>Role</span><select name="role"><option value="staff">Staff</option><option value="admin">Admin</option></select></label></div><button class="btn">Add user</button></form></div>` : ''}</div>`;
   const v = $('#view');
@@ -401,6 +403,7 @@ async function pageSettings() {
       S.settings = await api('settings', 'PUT', body); toast('Settings saved', 'ok'); layout();
       $$('.side nav a').forEach(a => a.classList.toggle('on', a.dataset.n === 'settings'));
     });
+    if (t.dataset.act === 'deltpl' && confirmBox('Delete this template?')) guard(async () => { await api('templates/' + t.dataset.id, 'DELETE'); S.templates = await api('templates'); pageSettings(); });
     if (t.dataset.act === 'deluser' && confirmBox('Remove this user?')) guard(async () => { await api('users/' + t.dataset.id, 'DELETE'); loadUsers(); });
   };
   $('#pw').onsubmit = e => { e.preventDefault(); const f = e.target; guard(async () => { await api('auth/password', 'POST', { current: f.current.value, new: f.new.value }); toast('Password updated', 'ok'); f.reset(); }); };

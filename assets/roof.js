@@ -71,22 +71,28 @@ function roofGeometry(p) {
 }
 
 /* the priced line items for one material package */
+function roofCost(key, kind) {
+  const src = kind === 'mat' ? ROOF_MATS[key] : ROOF_PARTS[key];
+  const it = (S.rates || []).find(r => r.active && r.division === 'roofing' && r.name.toLowerCase().includes(src.match.toLowerCase()));
+  const rate = roofRate(key, kind);
+  return it && it.cost && n((Q.data.roofcalc.custom || {})[key]) === 0 ? it.cost : r2(rate * 0.8);
+}
 function roofItems(g, p, key) {
   const m = ROOF_MATS[key];
   const sheetArea = Math.max(g.billed - g.skyArea * (1 + n(p.waste) / 100), 0);
   const items = [];
-  const add = (desc, unit, qty, rate) => { if (qty > 0) items.push({ desc, unit, qty: r2(qty), rate: r2(rate) }); };
+  const add = (desc, unit, qty, rate, ck, kind = 'part') => { if (qty > 0) items.push({ desc, unit, qty: r2(qty), rate: r2(rate), cost: ck ? roofCost(ck, kind) : 0 }); };
   const dims = `${r2(n(p.len))} x ${r2(n(p.wid))} ft ${p.type === 'gable' ? 'gable' : p.type === 'shed' ? 'mono-slope' : 'flat'} roof, slope ${n(p.slope)}°`;
-  add(`Roof sheet - ${m.label}, supply & fixing\n(${dims}; roof area ${Math.round(g.area).toLocaleString('en-IN')} sq ft + ${n(p.waste)}% wastage/laps)`, 'sq ft', sheetArea, roofRate(key, 'mat'));
-  if (g.skyArea > 0) add('Translucent FRP skylight sheet - supply & fixing', 'sq ft', g.skyArea * (1 + n(p.waste) / 100), roofRate('sky', 'part'));
-  add('MS structural frame / truss / rafter - fabrication & erection', 'kg', g.frameKg, roofRate('frame', 'part'));
-  add('GI / MS purlins (Z / C) - supply & fixing', 'kg', g.purlinKg, roofRate('purlin', 'part'));
-  add('Ridge cap flashing', 'rft', g.ridge, roofRate('ridge', 'part'));
-  add('Barge / gable flashing', 'rft', g.barge, roofRate('barge', 'part'));
-  add('Roof gutter with end caps & outlets', 'rft', g.gutterRft, roofRate('gutter', 'part'));
-  add('Downpipe 100 mm with clamps', 'rft', g.pipeRft, roofRate('pipe', 'part'));
-  add('Self-drilling roofing screws with EPDM washers', 'nos', g.screws, roofRate('screw', 'part'));
-  add('Turbo ventilator 24 inch with base', 'nos', g.turbo, roofRate('turbo', 'part'));
+  add(`Roof sheet - ${m.label}, supply & fixing\n(${dims}; roof area ${Math.round(g.area).toLocaleString('en-IN')} sq ft + ${n(p.waste)}% wastage/laps)`, 'sq ft', sheetArea, roofRate(key, 'mat'), key, 'mat');
+  if (g.skyArea > 0) add('Translucent FRP skylight sheet - supply & fixing', 'sq ft', g.skyArea * (1 + n(p.waste) / 100), roofRate('sky', 'part'), 'sky');
+  add('MS structural frame / truss / rafter - fabrication & erection', 'kg', g.frameKg, roofRate('frame', 'part'), 'frame');
+  add('GI / MS purlins (Z / C) - supply & fixing', 'kg', g.purlinKg, roofRate('purlin', 'part'), 'purlin');
+  add('Ridge cap flashing', 'rft', g.ridge, roofRate('ridge', 'part'), 'ridge');
+  add('Barge / gable flashing', 'rft', g.barge, roofRate('barge', 'part'), 'barge');
+  add('Roof gutter with end caps & outlets', 'rft', g.gutterRft, roofRate('gutter', 'part'), 'gutter');
+  add('Downpipe 100 mm with clamps', 'rft', g.pipeRft, roofRate('pipe', 'part'), 'pipe');
+  add('Self-drilling roofing screws with EPDM washers', 'nos', g.screws, roofRate('screw', 'part'), 'screw');
+  add('Turbo ventilator 24 inch with base', 'nos', g.turbo, roofRate('turbo', 'part'), 'turbo');
   return items;
 }
 const roofSum = items => r2(items.reduce((s, i) => s + r2(i.qty * i.rate), 0));
