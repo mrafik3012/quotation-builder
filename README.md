@@ -23,6 +23,11 @@ PHP 8 + MySQL, no build step — runs on Hostinger Cloud / shared hosting.
 
 PHP 8.0+ with `pdo_mysql` is required (default on Hostinger).
 
+## Starter rate cards
+New installs get ~490 indicative line items across the four divisions (Sheet Roofing: GI, UPVC, PUF / PIR / rockwool panels, aluminium, polycarbonate, FRP and more, plus structure, fasteners, flashings, gutters, ventilation, skylights, insulation, shutters, site charges and repairs).
+Already installed? Open **Rate Cards -> Import CSV** and pick `docs/rate-cards-extended.csv` (it appends; delete duplicates you do not want).
+All rates are placeholders - replace them with your real costs.
+
 ## Notes
 - The bundled rates, terms and payment schedules are **indicative starting values** — review them before sending quotes to clients.
 - PDF is produced by the browser (Print → Save as PDF). Turn off "Headers and footers" in the print dialog.
