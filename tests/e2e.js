@@ -2,6 +2,8 @@
 /* Browser QA: XSS, mobile overflow, console errors, staff permissions, locked quotes, total parity.
    Usage: BASE=http://127.0.0.1:8766 node tests/e2e.js     (needs Playwright; see tests/run.sh) */
 const { chromium } = require('playwright');
+const { totp } = require('./helpers');
+let axeSrc = null; try { axeSrc = require('fs').readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8'); } catch (e) { /* accessibility gate is skipped when axe-core is not installed */ }
 
 const BASE = process.env.BASE || 'http://127.0.0.1:8766';
 const ADMIN = { email: process.env.ADMIN_EMAIL || 'a@b.com', password: process.env.ADMIN_PASSWORD || 'changeme123' };
@@ -117,6 +119,44 @@ const ok = (c, m) => { if (c) { passed++; console.log('  ok   ' + m); } else { f
   const pv = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth }));
   ok(pv.sw <= pv.cw + 1, `no horizontal scroll on the client page (${pv.sw}/${pv.cw})`);
   await page.setViewportSize({ width: 1280, height: 900 });
+
+  /* ---------- regional language + real PDF ---------- */
+  console.log('\nRegional-language labels and PDF output');
+  const mkLang = async (lang, n) => (await api('POST', 'quotes', { division: 'roofing', client: { name: 'Lang Co' }, title: 'Lang ' + lang, data: { lang, sections: [{ title: 'S', items: Array.from({ length: n }, (_, i) => ({ desc: 'Line ' + i + ' supply and fixing of material as per specification and drawing', unit: 'sq ft', qty: 10 + i, rate: 50 + i })) }], tax_rate: 18, payment_schedule: [{ label: 'All', percent: 100 }] } })).data;
+  const ta = await mkLang('ta', 5), big = await mkLang('', 70);
+  await go(`#/quotes/${ta.id}/print`);
+  const taText = await page.textContent('.doc'); ok(/விலைப்புள்ளி/.test(taText) && /QUOTATION/.test(taText), 'Tamil label printed with the English one underneath');
+  const pdf1 = await page.pdf({ format: 'A4', printBackground: true, preferCSSPageSize: true }); ok(pdf1.slice(0, 5).toString() === '%PDF-' && pdf1.length > 20000, 'a real PDF is produced (' + pdf1.length + ' bytes)');
+  await go(`#/quotes/${big.id}/print`); const pdf2 = await page.pdf({ format: 'A4', printBackground: true, preferCSSPageSize: true }); const pdfPages = (pdf2.toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length; ok(pdfPages >= 3, `a 70-line quote paginates over several A4 pages (${pdfPages})`);
+  const noOverflow = await page.evaluate(() => { const d = document.querySelector('.doc'); return d.scrollWidth <= d.clientWidth + 1; }); ok(noOverflow, 'the quotation fits its page width');
+
+  /* ---------- lists at volume ---------- */
+  console.log('\nPagination in the UI');
+  for (let i = 0; i < 55; i++) await api('POST', 'clients', { name: 'Bulk Client ' + String(i).padStart(3, '0'), phone: '90000' + String(i).padStart(5, '0') });
+  for (let i = 0; i < 55; i++) await api('POST', 'quotes', { division: 'pmc', client: { name: 'Bulk Client 000' }, title: 'Bulk quote ' + i, data: { sections: [{ title: 'S', items: [{ desc: 'x', unit: 'u', qty: 1, rate: 1 }] }] } });
+  await go('#/quotes'); await page.waitForSelector('#ql table');
+  const rows1 = await page.locator('#ql tbody tr').count(); ok(rows1 === 50, 'quotes list shows 50 rows first (' + rows1 + ')'); ok(/Showing 50 of \d+/.test(await page.textContent('#ql')), 'shows how many exist');
+  await page.click('#qmore'); await page.waitForTimeout(600); ok((await page.locator('#ql tbody tr').count()) > 50, '"Load more" appends the next page');
+  await go('#/clients'); await page.waitForSelector('#cb tr'); ok((await page.locator('#cb tr').count()) === 50, 'clients list pages at 50'); await page.fill('#cs', 'Bulk Client 04'); await page.waitForTimeout(700);
+  const found = await page.locator('#cb tr').count(); ok(found >= 1 && found <= 12, 'client search narrows the list on the server (' + found + ')');
+
+  /* ---------- two-step sign-in through the real UI ---------- */
+  console.log('\nTwo-step sign-in (UI)');
+  const tfEmail = `ui2fa${Date.now()}@example.com`; await api('POST', 'users', { name: 'UI Two Factor', email: tfEmail, password: 'password123', role: 'staff' });
+  const tctx = await browser.newContext({ viewport: { width: 1280, height: 900 } }); const tp = await tctx.newPage(); tp.on('dialog', d => d.accept('password123'));
+  await tp.goto(BASE + '/index.html'); await tp.fill('input[name=email]', tfEmail); await tp.fill('input[name=password]', 'password123'); await tp.click('#lf button.pri'); await tp.waitForSelector('.side');
+  await tp.goto(BASE + '/index.html#/settings'); await tp.click('[data-tf=on]'); await tp.waitForSelector('#tfc'); const secret = (await tp.locator('#tfa code').textContent()).replace(/\s/g, '');
+  await tp.fill('#tfc', totp(secret)); await tp.click('#tfv'); await tp.waitForSelector('text=Two-step sign-in is on'); ok((await tp.locator('.modal pre').textContent()).trim().split('\n').length === 8, '8 recovery codes shown once'); await tp.click('#rc3');
+  await tp.click('text=Sign out'); await tp.waitForSelector('#lf'); await tp.fill('input[name=email]', tfEmail); await tp.fill('input[name=password]', 'password123'); await tp.click('#lf button.pri'); await tp.waitForSelector('#codebox', { state: 'visible' }); ok(true, 'the code box appears after the password');
+  await tp.fill('input[name=code]', totp(secret, Date.now(), 1)); await tp.click('#lf button.pri'); await tp.waitForSelector('.side'); ok(true, 'signed in with the authenticator code');
+  await tctx.close();
+
+  /* ---------- accessibility gate ---------- */
+  console.log('\nAccessibility (axe-core, WCAG 2 A/AA)');
+  if (axeSrc) {
+    const a11y = async label => { await page.evaluate(axeSrc); const r = await page.evaluate(async () => await axe.run(document, { runOnly: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] })); const bad = r.violations.filter(v => ['serious', 'critical'].includes(v.impact)); ok(bad.length === 0, `${label}: no serious/critical issues` + (bad.length ? ' - ' + bad.map(v => v.id + ' (' + v.nodes[0].target.join(' ') + ')').join('; ') : '')); };
+    for (const [label, h] of [['dashboard', '#/dashboard'], ['quotes', '#/quotes'], ['editor', `#/quotes/${ta.id}`], ['print view', `#/quotes/${ta.id}/print`], ['clients', '#/clients'], ['rate cards', '#/rates'], ['projects', '#/projects'], ['project detail', `#/projects/${pid}`], ['reports', '#/reports'], ['settings', '#/settings']]) { await go(h); await a11y(label); }
+  } else console.log('  skip axe-core not installed (npm i axe-core)');
 
   /* ---------- staff UI ---------- */
   console.log('\nStaff role UI');

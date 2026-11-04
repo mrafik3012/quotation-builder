@@ -16,6 +16,8 @@ function json_out($data, int $code = 200): void
     http_response_code($code);
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store');
+    header('X-Content-Type-Options: nosniff');
+    header('X-Frame-Options: SAMEORIGIN');
     echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
     exit;
 }

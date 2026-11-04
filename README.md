@@ -23,16 +23,18 @@ PHP 8 + MySQL, no build step — runs on Hostinger Cloud / shared hosting.
 
 PHP 8.0+ with `pdo_mysql` is required (default on Hostinger).
 
-## Selling & tracking features
-- **Roofing calculator** - roof area, slope, wastage, purlins, flashings, gutters and fasteners; compares GI / UPVC / PUF / aluminium (and more) side by side.
+## Selling, billing & operations features
+- **Roofing calculator** - roof area, slope, wastage, steel, flashings, gutters, fasteners; compares GI / UPVC / PUF / aluminium and more side by side.
 - **Options** - Good / Better / Best packages on one quote; the grand total follows the selected option.
-- **Share with client** - private link (`view.html?t=...`): client views, picks an option, e-signs and accepts or declines. Send via WhatsApp / email; views and responses appear under *Client activity*.
-- **Margin tracking** - cost on rate items and lines (never printed), margin per quote and low-margin alert (Settings).
-- **Templates**, CGST/SGST vs IGST split, HSN/SAC, dashboard follow-up list.
-- **Projects** - convert an accepted quote into a project: billing milestones from the payment schedule, record payments, numbered tax invoices (CGST/SGST/IGST), variation orders and a site log; receivables on the dashboard.
-- **Interior** - add rooms as sections, attach photos/renders per section. **Reports** - win rate, margin, salesperson, lead source, aging, receivables. CSV export for quotes and quote lines.
-- **Admin tools** - activity log, full JSON backup download (Settings), rate cards editable by admins only. Installable as a phone/desktop app (PWA, needs HTTPS).
-- Database upgrades run automatically on first sign-in after uploading new files (see `api/migrate.php`).
+- **Client link** - private link (or e-mail from the app): the client views, picks an option, e-signs and accepts or declines; links expire; accepted quotes lock.
+- **Margin tracking**, quote **templates**, CGST/SGST vs IGST, HSN/SAC, **regional-language labels** (Hindi, Tamil, Telugu, Kannada, Malayalam) on printed quotes.
+- **Projects** - milestones, payments with numbered **receipts**, numbered **tax invoices**, **credit notes**, **invoice cancellation** (numbers never reused), IRN/e-invoice reference fields, variation orders, site log **with photos**, **AMC / warranty renewals**.
+- **Interior** rooms and photos, **Reports** (win rate, margin, salesperson, lead source, aging, receivables), CSV export.
+- **Accounts & security** - two-step sign-in (authenticator app + recovery codes), forgot/reset password by e-mail, admin password reset, last-admin protection, sign-in lockout, roles, rate limits, audit log.
+- **E-mail** (SMTP) - quotes to clients, reset links, daily summary, optional client reminders.
+- **Operations** - daily cron job (backup, summary e-mail, reminders), health endpoint for uptime monitors, error log, system-health card, JSON backup, **privacy tools** (export / erase client data), paginated lists tested at 4,000+ quotes, installable PWA.
+- **AI assistants** - built-in MCP server with OAuth: see below.
+- Database upgrades run automatically on first admin sign-in after uploading new files (`api/migrate.php`).
 
 ## Starter rate cards
 New installs get ~490 indicative line items across the four divisions (Sheet Roofing: GI, UPVC, PUF / PIR / rockwool panels, aluminium, polycarbonate, FRP and more, plus structure, fasteners, flashings, gutters, ventilation, skylights, insulation, shutters, site charges and repairs).
@@ -40,24 +42,19 @@ Already installed? Open **Rate Cards -> Import CSV** and pick `docs/rate-cards-e
 All rates are placeholders - replace them with your real costs.
 
 ## Use it from Claude / AI tools (MCP)
-The app is also an **MCP server** (`api/mcp.php`): AI assistants can search quotes and rate cards, price roofs (GI / UPVC / PUF / aluminium), and *draft* quotations - never send, accept, delete or change settings. Admin creates a scoped, expiring, revocable token in **Settings -> AI assistants**. Setup for Claude Code, Claude Desktop, Cursor and VS Code: [docs/MCP.md](docs/MCP.md).
+The app is an **MCP server** (`api/mcp.php`) with OAuth sign-in: *"provide a roofing quotation for GI sheet, 60x30 ft, A-type"* creates a priced **draft** quote in one step. Assistants can search quotes and rate cards, price roofs and draft quotations - never send, accept, delete, record payments or change settings; an admin approves each connection and chooses the access level. Setup for Claude.ai, Claude Code, Claude Desktop, Cursor and VS Code: [docs/MCP.md](docs/MCP.md).
 
-## Production checklist
-1. HTTPS on, then uncomment the redirect in `.htaccess`. Delete `install.php` after installing.
-2. Settings: company details, GSTIN, bank details, terms, payment schedules, HSN/SAC codes (have your CA confirm the GST setup).
-3. Replace the starter rates **and costs** with your real numbers (Rate Cards).
-4. Enable automatic backups in Hostinger hPanel; also download the JSON backup (Settings) before every upgrade.
-5. Create staff users with the *Staff* role (they cannot change rates, settings, tokens or see the audit log).
-6. Upgrading: upload the new files, then sign in once as admin - the database upgrades itself (`api/migrate.php`).
-7. Run a few real quotes end to end (create -> share -> accept -> project -> invoice) and compare against your current method before relying on it.
+## Deploying and running it
+Step-by-step install, e-mail, cron/backups, monitoring, upgrades, privacy requests and troubleshooting: **[docs/DEPLOY.md](docs/DEPLOY.md)**. Short version: upload, run `install.php`, delete it, turn on HTTPS, fill in Settings, replace the starter rates and costs, turn on 2-step sign-in, set up the daily cron job and e-mail, have your CA confirm the GST set-up.
 
 ## Tests
 ```
-tests/run.sh            # money-math + roof parity (browser vs server), API workflows, MCP - on a throw-away SQLite install
-tests/run.sh --e2e      # + Playwright browser tests (XSS, mobile layout, permissions, totals)
-MYSQL_DB=... MYSQL_USER=... MYSQL_PASS=... tests/run.sh   # same, against MySQL (empty database)
+tests/run.sh            # money-math + roof parity, API, MCP, OAuth, accounts, billing, features, cron, scale (SQLite, throw-away install)
+tests/run.sh --e2e      # + Playwright browser tests: XSS in every field, mobile layout, real PDF output, 2FA UI, pagination, accessibility (axe)
+MYSQL_DB=... MYSQL_USER=... MYSQL_PASS=... tests/run.sh --e2e     # same against MySQL (empty database)
+BASE=http://your-apache-host node tests/apache.test.js            # .htaccess behaviour (blocked internals, rewrites, headers) on real Apache
 ```
-GitHub Actions runs the suite on SQLite and MySQL 8 for every push (`.github/workflows/tests.yml`).
+Verified on SQLite, MySQL-8-mode MariaDB and real Apache 2.4 (mod_php). GitHub Actions runs the suite on SQLite and MySQL 8, plus the browser tests (`.github/workflows/tests.yml`).
 
 ## Notes
 - The bundled rates, terms and payment schedules are **indicative starting values** — review them before sending quotes to clients.
@@ -82,6 +79,11 @@ api/index.php         JSON API
 api/lib.php           helpers, money maths, rate limiting, quote numbering
 api/core.php          shared business logic (quotes, rates, reports, roof calculator)
 api/mcp.php           MCP server for AI assistants
+api/oauth.php         OAuth 2.1 server for MCP connectors
+api/cron.php          scheduled jobs (backup, digest, reminders)
+api/health.php        uptime-monitor endpoint
+api/mail.php          SMTP / mail() sender
+api/auth.php          TOTP 2FA, recovery codes, shared sign-in check
 api/public.php        client share-link endpoint (view / accept / decline)
 api/projects.php      projects, milestones, payments, invoices
 api/migrate.php       automatic database upgrades

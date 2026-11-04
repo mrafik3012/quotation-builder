@@ -84,7 +84,7 @@ try {
         if (in_array($r, ['resource-metadata', 'wk-protected-resource'], true)) oauth_json(['resource' => oauth_mcp_url(), 'authorization_servers' => [oauth_issuer()], 'scopes_supported' => ['mcp:read', 'mcp:write'], 'bearer_methods_supported' => ['header'], 'resource_name' => 'Infraura Quotation Builder']);
         oauth_json(['issuer' => oauth_issuer(), 'authorization_endpoint' => oauth_url('authorize'), 'token_endpoint' => oauth_url('token'), 'registration_endpoint' => oauth_url('register'), 'revocation_endpoint' => oauth_url('revoke'),
             'response_types_supported' => ['code'], 'grant_types_supported' => ['authorization_code', 'refresh_token'], 'code_challenge_methods_supported' => ['S256'], 'token_endpoint_auth_methods_supported' => ['none'], 'revocation_endpoint_auth_methods_supported' => ['none'],
-            'scopes_supported' => ['mcp:read', 'mcp:write'], 'service_documentation' => app_base_url() . '/docs/MCP.md']);
+            'scopes_supported' => ['mcp:read', 'mcp:write']]);
     }
     if (!oauth_enabled()) oauth_err('access_denied', 'OAuth is switched off for this site. Use an access token instead.', 403);
 

@@ -2,6 +2,14 @@
 /* Shared test helpers: tiny fake SMTP server, TOTP generator, cookie-aware API client. No dependencies. */
 const net = require('net'), crypto = require('crypto');
 
+/** Merge Set-Cookie headers into a Cookie header the way a browser does: the LAST value for each cookie name wins
+    (PHP can send two session cookies on login: the initial one and the regenerated one). */
+function mergeCookies(prev, setCookies) {
+  const jar = {}; (prev || '').split('; ').filter(Boolean).forEach(p => { const i = p.indexOf('='); jar[p.slice(0, i)] = p.slice(i + 1); });
+  (setCookies || []).forEach(c => { const p = c.split(';')[0]; const i = p.indexOf('='); jar[p.slice(0, i)] = p.slice(i + 1); });
+  return Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
+}
+
 /** Fake SMTP server (supports EHLO, AUTH LOGIN, MAIL/RCPT/DATA/QUIT). Captured mail is in .messages. */
 function startSmtp(opts = {}) {
   const messages = []; const auth = { seen: [] };
@@ -57,11 +65,11 @@ class Client {
   constructor(base) { this.base = base; this.cookie = ''; }
   async call(method, url, body, headers = {}) {
     const r = await fetch(this.base + '/' + url, { method, headers: { 'X-Requested-With': 'infraura', ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(this.cookie ? { Cookie: this.cookie } : {}), ...headers }, body: body !== undefined ? JSON.stringify(body) : undefined, redirect: 'manual' });
-    const sc = r.headers.getSetCookie ? r.headers.getSetCookie() : []; if (sc.length) this.cookie = sc.map(c => c.split(';')[0]).join('; ');
+    const sc = r.headers.getSetCookie ? r.headers.getSetCookie() : []; if (sc.length) this.cookie = mergeCookies(this.cookie, sc);
     const text = await r.text(); let data = null; try { data = JSON.parse(text); } catch (e) { data = text; }
     return { status: r.status, data, headers: r.headers };
   }
   api(method, route, body) { return this.call(method, `api/index.php?r=${route}`, body); }
 }
 
-module.exports = { startSmtp, parseMail, totp, Client };
+module.exports = { startSmtp, parseMail, totp, Client, mergeCookies };

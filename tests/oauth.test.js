@@ -2,7 +2,7 @@
 /* OAuth 2.1 for the MCP endpoint. Usage: BASE=http://127.0.0.1:8766 node tests/oauth.test.js
    (needs the router in tests/router.php when run with PHP's built-in server so the /.well-known addresses resolve) */
 const crypto = require('crypto');
-const { Client } = require('./helpers');
+const { Client, mergeCookies } = require('./helpers');
 const BASE = process.env.BASE || 'http://127.0.0.1:8766';
 const ADMIN = { email: process.env.ADMIN_EMAIL || 'a@b.com', password: process.env.ADMIN_PASSWORD || 'changeme123' };
 let passed = 0, failed = 0;
@@ -18,7 +18,7 @@ class Browser {
   constructor() { this.cookie = ''; }
   async req(method, url, form) {
     const r = await fetch(url, { method, redirect: 'manual', headers: { ...(this.cookie ? { Cookie: this.cookie } : {}), ...(form ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}) }, body: form ? new URLSearchParams(form).toString() : undefined });
-    const sc = r.headers.getSetCookie ? r.headers.getSetCookie() : []; if (sc.length) this.cookie = sc.map(c => c.split(';')[0]).join('; ');
+    const sc = r.headers.getSetCookie ? r.headers.getSetCookie() : []; if (sc.length) this.cookie = mergeCookies(this.cookie, sc);
     return { status: r.status, location: r.headers.get('location'), text: await r.text(), headers: r.headers };
   }
 }

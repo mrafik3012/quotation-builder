@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: shivammathur/setup-php@v2
-        with: { php-version: '8.3', extensions: pdo_mysql, pdo_sqlite, mbstring }
+        with: { php-version: '8.3', extensions: 'pdo_mysql, pdo_sqlite, mbstring' }
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - name: PHP syntax check
@@ -23,4 +23,9 @@ jobs:
       - name: Tests on SQLite
         run: tests/run.sh
       - name: Tests on MySQL 8
-        run: MYSQL_HOST=127.0.0.1 MYSQL_DB=qb_test MYSQL_USER=root MYSQL_PASS=root tests/run.sh
+        run: MYSQL_HOST=127.0.0.1 MYSQL_ROOT_USER=root MYSQL_ROOT_PASS=root MYSQL_DB=qb_test MYSQL_USER=root MYSQL_PASS=root tests/run.sh
+      - name: Browser tests (Chromium, PDF, accessibility)
+        run: |
+          npm install --no-save playwright axe-core
+          npx playwright install --with-deps chromium
+          NODE_PATH=$PWD/node_modules tests/run.sh --e2e

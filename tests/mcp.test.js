@@ -1,5 +1,6 @@
 'use strict';
 /* MCP server tests (api/mcp.php). Usage: BASE=http://127.0.0.1:8766 node tests/mcp.test.js */
+const { mergeCookies } = require('./helpers');
 const BASE = process.env.BASE || 'http://127.0.0.1:8766';
 const ADMIN = { email: process.env.ADMIN_EMAIL || 'a@b.com', password: process.env.ADMIN_PASSWORD || 'changeme123' };
 let passed = 0, failed = 0; const failures = [];
@@ -11,7 +12,7 @@ const near = (a, b, m = '') => { if (Math.abs(a - b) > 0.011) throw new Error(`$
 let cookie = '';
 async function admin(method, route, body) {
   const r = await fetch(`${BASE}/api/index.php?r=${route}`, { method, headers: { 'X-Requested-With': 'infraura', 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) }, body: body ? JSON.stringify(body) : undefined });
-  const sc = r.headers.getSetCookie(); if (sc.length) cookie = sc.map(c => c.split(';')[0]).join('; ');
+  const sc = r.headers.getSetCookie(); if (sc.length) cookie = mergeCookies(cookie, sc);
   return { status: r.status, data: await r.json().catch(() => null) };
 }
 let rid = 0;
@@ -175,7 +176,7 @@ const payload = res => JSON.parse(res.content[0].text);
   await test('staff users cannot list or create tokens', async () => {
     const email = `mcpstaff${Date.now()}@example.com`; await admin('POST', 'users', { name: 'S', email, password: 'password123', role: 'staff' });
     const r = await fetch(`${BASE}/api/index.php?r=auth/login`, { method: 'POST', headers: { 'X-Requested-With': 'infraura', 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: 'password123' }) });
-    const ck = r.headers.getSetCookie().map(c => c.split(';')[0]).join('; '); const t = await fetch(`${BASE}/api/index.php?r=tokens`, { headers: { Cookie: ck, 'X-Requested-With': 'infraura' } }); eq(t.status, 403);
+    const ck = mergeCookies('', r.headers.getSetCookie()); const t = await fetch(`${BASE}/api/index.php?r=tokens`, { headers: { Cookie: ck, 'X-Requested-With': 'infraura' } }); eq(t.status, 403);
   });
   await test('the plain token is never stored or listed again', async () => {
     const list = (await admin('GET', 'tokens')).data; ok(list.length >= 3); ok(!JSON.stringify(list).includes(writeTok), 'plain token in list'); ok(list[0].prefix.startsWith('qbmcp_'));

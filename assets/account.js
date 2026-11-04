@@ -4,7 +4,7 @@
 async function renderSecurity() {
   const box = $('#seccard'); if (!box) return;
   const me = await api('auth/me'); const on = !!(me.user && me.user.totp);
-  box.innerHTML = `<h3>My account &amp; security</h3><div class="grid2"><div>
+  box.innerHTML = `<h2>My account &amp; security</h2><div class="grid2"><div>
    <form id="pw"><label class="f"><span>Current password</span><input type="password" name="current" required autocomplete="current-password"></label><label class="f"><span>New password (min 8 characters)</span><input type="password" name="new" minlength="8" required autocomplete="new-password"></label><button class="btn">Update password</button></form></div>
    <div><p style="margin:0 0 6px"><b>Two-step sign-in</b> ${on ? '<span class="chip accepted">On</span>' : '<span class="chip draft">Off</span>'}</p>
    <p class="muted small" style="margin-top:0">Adds a 6-digit code from an authenticator app (Google Authenticator, Microsoft Authenticator, Authy…) to your password. Strongly recommended for admins.</p>
@@ -15,7 +15,7 @@ async function renderSecurity() {
     if (t.dataset.tf === 'on') guard(async () => {
       const r = await api('auth/2fa/setup', 'POST'); const pretty = r.secret.replace(/(.{4})/g, '$1 ').trim();
       $('#tfa').innerHTML = `<ol class="small" style="padding-left:18px;margin:0 0 10px"><li>In your authenticator app choose <b>Add account → Enter a setup key</b> (or tap the link on your phone).</li><li>Account: <b>${esc(S.user.email)}</b> · Key: <code style="font-size:14px;color:var(--gold2)">${esc(pretty)}</code> · Type: time-based</li><li>Type the 6-digit code it shows:</li></ol>
-        <a class="btn sm" href="${esc(r.uri)}">Open in authenticator app</a> <div class="row" style="margin-top:10px"><input id="tfc" inputmode="numeric" maxlength="6" placeholder="123456" style="width:140px"><button class="btn pri" id="tfv" type="button">Verify &amp; turn on</button></div>`;
+        <a class="btn sm" href="${esc(r.uri)}">Open in authenticator app</a> <div class="row" style="margin-top:10px"><input id="tfc" aria-label="6-digit code from your authenticator app" inputmode="numeric" maxlength="6" placeholder="123456" style="width:140px"><button class="btn pri" id="tfv" type="button">Verify &amp; turn on</button></div>`;
       $('#tfv').onclick = () => guard(async () => { const x = await api('auth/2fa/enable', 'POST', { code: $('#tfc').value }); showRecovery(x.recovery_codes); renderSecurity(); });
     });
     if (t.dataset.tf === 'off') { const pw = window.prompt('Enter your password to turn off two-step sign-in'); if (pw) guard(async () => { await api('auth/2fa/disable', 'POST', { password: pw }); toast('Two-step sign-in is off', 'ok'); renderSecurity(); }); }
@@ -31,7 +31,7 @@ function showRecovery(codes) {
 async function renderMailCard() {
   const box = $('#mailcard'); if (!box) return;
   const s = S.settings; const configured = !!(s.smtp_host || s.mail_from);
-  box.innerHTML = `<h3>E-mail (quotes, reminders, password resets)</h3>
+  box.innerHTML = `<h2>E-mail (quotes, reminders, password resets)</h2>
   <p class="small" style="margin-top:0">${configured ? '<span class="chip accepted">Configured</span>' : '<span class="chip draft">Not set up</span>'} Use the mail account from your hosting (Hostinger: <b>smtp.hostinger.com</b>, port <b>465</b>, SSL, the full mailbox address as user). Without SMTP the app falls back to PHP's mail(), which often lands in spam.</p>
   <div class="grid3"><label class="f"><span>SMTP server</span><input data-m="smtp_host" value="${esc(s.smtp_host || '')}" placeholder="smtp.hostinger.com"></label>
   <label class="f"><span>Port</span><input data-m="smtp_port" type="number" value="${esc(s.smtp_port || '465')}"></label>
@@ -41,7 +41,7 @@ async function renderMailCard() {
   <label class="f"><span>“From” address</span><input data-m="mail_from" type="email" value="${esc(s.mail_from || '')}" placeholder="quotes@yourdomain.com"></label>
   <label class="f"><span>“From” name</span><input data-m="mail_from_name" value="${esc(s.mail_from_name || '')}" placeholder="${esc(s.company_name || '')}"></label>
   <label class="f"><span>Automatic client reminders</span><select data-m="client_reminders"><option value="0" ${s.client_reminders !== '1' ? 'selected' : ''}>Off - only remind me</option><option value="1" ${s.client_reminders === '1' ? 'selected' : ''}>On - e-mail clients after 3 and 7 days</option></select></label></div>
-  <div class="row"><button class="btn pri" id="msave" type="button">Save e-mail settings</button><input id="mto" type="email" placeholder="send a test to…" style="max-width:240px" value="${esc(S.user.email)}"><button class="btn" id="mtest" type="button">Send test e-mail</button><span id="mres" class="small"></span></div>`;
+  <div class="row"><button class="btn pri" id="msave" type="button">Save e-mail settings</button><input id="mto" type="email" aria-label="Send a test e-mail to" placeholder="send a test to…" style="max-width:240px" value="${esc(S.user.email)}"><button class="btn" id="mtest" type="button">Send test e-mail</button><span id="mres" class="small"></span></div>`;
   const body = () => Object.fromEntries($$('[data-m]', box).map(el => [el.dataset.m, el.value]));
   $('#msave').onclick = () => guard(async () => { S.settings = await api('settings', 'PUT', body()); toast('E-mail settings saved', 'ok'); renderMailCard(); });
   $('#mtest').onclick = () => guard(async () => {
@@ -53,8 +53,8 @@ async function renderMailCard() {
 async function renderTeam() {
   const box = $('#teamcard'); if (!box) return;
   const us = await api('users');
-  box.innerHTML = `<h3>Team</h3><div class="scroll"><table class="tbl"><thead><tr><th>User</th><th>Role</th><th>2-step</th><th></th></tr></thead><tbody>${us.map(u => `<tr><td><b>${esc(u.name)}</b><div class="muted small">${esc(u.email)}</div></td>
-   <td><select data-role="${u.id}" style="width:auto"><option value="staff" ${u.role === 'staff' ? 'selected' : ''}>Staff</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option></select></td>
+  box.innerHTML = `<h2>Team</h2><div class="scroll"><table class="tbl"><thead><tr><th>User</th><th>Role</th><th>2-step</th><th><span class="sr">Actions</span></th></tr></thead><tbody>${us.map(u => `<tr><td><b>${esc(u.name)}</b><div class="muted small">${esc(u.email)}</div></td>
+   <td><select data-role="${u.id}" aria-label="Role of ${esc(u.name)}" style="width:auto"><option value="staff" ${u.role === 'staff' ? 'selected' : ''}>Staff</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option></select></td>
    <td>${u.totp_enabled ? '<span class="chip accepted">On</span>' : '<span class="muted small">off</span>'}${u.must_change_password ? ' <span class="chip sent">must change pw</span>' : ''}</td>
    <td class="r nw"><button class="btn sm" data-tm="reset" data-id="${u.id}" type="button">Reset password</button>${u.totp_enabled ? ` <button class="btn sm" data-tm="no2fa" data-id="${u.id}" type="button">Turn off 2-step</button>` : ''}${u.id === S.user.id ? ' <span class="muted small">you</span>' : ` <button class="btn sm dng" data-tm="del" data-id="${u.id}" type="button">Remove</button>`}</td></tr>`).join('')}</tbody></table></div>
   <form id="uf" style="margin-top:12px"><div class="grid2"><label class="f"><span>Name</span><input name="name" required></label><label class="f"><span>Email</span><input name="email" type="email" required></label><label class="f"><span>Password (min 8)</span><input name="password" type="text" minlength="8" required autocomplete="off"></label><label class="f"><span>Role</span><select name="role"><option value="staff">Staff</option><option value="admin">Admin</option></select></label></div><button class="btn">Add user</button></form>`;
@@ -94,7 +94,7 @@ async function renderSystemCard() {
   const age = s.backups.length ? Math.round((Date.now() - new Date(s.backups[0].at.replace(' ', 'T'))) / 36e5) : null;
   const cronAge = s.cron_last_run ? Math.round((Date.now() - new Date(s.cron_last_run.replace(' ', 'T'))) / 36e5) : null;
   const dot = (good, warn) => `<span class="chip ${good ? 'accepted' : warn ? 'sent' : 'rejected'}">${good ? 'OK' : warn ? 'Check' : 'Action needed'}</span>`;
-  box.innerHTML = `<h3>System health, backups &amp; scheduled jobs</h3>
+  box.innerHTML = `<h2>System health, backups &amp; scheduled jobs</h2>
   <div class="scroll"><table class="tbl"><tbody>
    <tr><td>Automatic backup</td><td>${s.backups.length ? `last one ${age} h ago` : 'never run'}</td><td class="r">${dot(age !== null && age < 48, age !== null)}</td></tr>
    <tr><td>Scheduled jobs (cron)</td><td>${s.cron_last_run ? `last ran ${cronAge} h ago (${esc(s.cron_last_run)})` : 'not set up yet - see below'}</td><td class="r">${dot(cronAge !== null && cronAge < 48, cronAge !== null)}</td></tr>

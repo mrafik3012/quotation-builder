@@ -2,6 +2,7 @@
 /* API / workflow regression tests. No dependencies (Node 18+).
    Usage:  BASE=http://127.0.0.1:8766 node tests/api.test.js   (see tests/run.sh) */
 
+const { mergeCookies } = require('./helpers');
 const BASE = process.env.BASE || 'http://127.0.0.1:8766';
 const ADMIN = { email: process.env.ADMIN_EMAIL || 'a@b.com', password: process.env.ADMIN_PASSWORD || 'changeme123' };
 let passed = 0, failed = 0; const failures = [];
@@ -14,7 +15,7 @@ class Client {
     if (this.cookie) headers.Cookie = this.cookie;
     const res = await fetch(`${BASE}/${path}`, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined, redirect: 'manual' });
     const sc = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
-    if (sc.length) this.cookie = sc.map(c => c.split(';')[0]).join('; ');
+    if (sc.length) this.cookie = mergeCookies(this.cookie, sc);
     let data = null; const text = await res.text(); try { data = JSON.parse(text); } catch (e) { data = text; }
     return { status: res.status, data };
   }

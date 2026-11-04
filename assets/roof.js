@@ -131,8 +131,8 @@ function openRoofCalc() {
       <div><span class="muted">Ridge / barge</span><br><b>${Math.round(g.ridge)} / ${Math.round(g.barge)} rft</b></div>
       <div><span class="muted">Gutter / downpipe</span><br><b>${Math.round(g.gutterRft)} / ${Math.round(g.pipeRft)} rft</b></div>
       <div><span class="muted">Steel (frame + purlin)</span><br><b>${Math.round(g.frameKg + g.purlinKg).toLocaleString('en-IN')} kg</b></div></div></div>
-    ${sets.length ? `<div class="scroll"><table class="tbl"><thead><tr><th></th>${sets.map(s => `<th class="r">${esc(ROOF_MATS[s.k].short)}${s.total === best && sets.length > 1 ? ' ★' : ''}</th>`).join('')}</tr></thead><tbody>
-     <tr><td>Sheet rate / sq ft (₹)</td>${sets.map(s => `<td class="r"><input style="width:84px;text-align:right" type="number" step="any" min="0" data-rate="${s.k}" value="${roofRate(s.k, 'mat')}"></td>`).join('')}</tr>
+    ${sets.length ? `<div class="scroll"><table class="tbl"><thead><tr><th><span class="sr">Item</span></th>${sets.map(s => `<th class="r">${esc(ROOF_MATS[s.k].short)}${s.total === best && sets.length > 1 ? ' ★' : ''}</th>`).join('')}</tr></thead><tbody>
+     <tr><td>Sheet rate / sq ft (₹)</td>${sets.map(s => `<td class="r"><input aria-label="Sheet rate per sq ft for ${esc(ROOF_MATS[s.k].short)}" style="width:84px;text-align:right" type="number" step="any" min="0" data-rate="${s.k}" value="${roofRate(s.k, 'mat')}"></td>`).join('')}</tr>
      <tr><td>Roof sheets</td>${sets.map(s => `<td class="r">${fmt(roofSum(s.items.slice(0, 1)))}</td>`).join('')}</tr>
      <tr><td>Structure, flashings, gutter, fasteners &amp; ventilation</td>${sets.map(s => `<td class="r">${fmt(s.total - roofSum(s.items.slice(0, 1)))}</td>`).join('')}</tr>
      <tr><td><b>Total before GST</b></td>${sets.map(s => `<td class="r"><b>${fmt(s.total)}</b></td>`).join('')}</tr>

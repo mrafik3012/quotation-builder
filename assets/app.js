@@ -58,7 +58,7 @@ function toast(msg, type = '') {
 function openModal(html, wide) {
   const o = document.createElement('div');
   o.className = 'overlay';
-  o.innerHTML = `<div class="modal ${wide ? 'wide' : ''}">${html}</div>`;
+  o.innerHTML = `<div class="modal ${wide ? 'wide' : ''}" role="dialog" aria-modal="true">${html}</div>`;
   document.body.appendChild(o);
   const close = () => o.remove();
   o.addEventListener('mousedown', e => { if (e.target === o) close(); });
@@ -86,7 +86,12 @@ function download(name, text, type = 'text/csv') {
 }
 
 /* ---------- auth / boot ---------- */
+/** Scrollable areas must be reachable by keyboard (WCAG 2.1.1): give them focus + a name. Runs whenever the page changes. */
+function a11yScrollables() {
+  $$('.scroll, [style*="overflow:auto"], [style*="overflow-x:auto"]').forEach(el => { if (!el.hasAttribute('tabindex')) { el.tabIndex = 0; el.setAttribute('role', 'region'); el.setAttribute('aria-label', el.getAttribute('aria-label') || 'Scrollable content'); } });
+}
 async function init() {
+  let tm; new MutationObserver(() => { clearTimeout(tm); tm = setTimeout(a11yScrollables, 60); }).observe(document.body, { childList: true, subtree: true });
   window.addEventListener('hashchange', onHash);
   window.addEventListener('beforeunload', e => { if (window.__dirty) { e.preventDefault(); e.returnValue = ''; } });
   const rm = /^#\/reset\/([a-f0-9]{48})$/.exec(location.hash);
@@ -110,7 +115,7 @@ async function loadBootstrap() {
 }
 function authShell(inner) {
   document.body.classList.remove('printmode');
-  $('#app').innerHTML = `<div class="login"><img class="logo" src="assets/logo.png" alt="Infraura"><h1>Quotation Builder</h1>${inner}</div>`;
+  $('#app').innerHTML = `<main class="login"><img class="logo" src="assets/logo.png" alt="Infraura"><h1>Quotation Builder</h1>${inner}</main>`;
 }
 function showLogin(prefill = {}) {
   authShell(`<form id="lf"><p class="muted" style="margin:0 0 16px">Sign in to continue</p>
@@ -238,15 +243,15 @@ async function pageDashboard() {
   </div>
   <div class="divcards">${Object.entries(DIVS).map(([k, label]) => {
     const x = dv[k] || { n: 0, value: 0 };
-    return `<div class="divcard"><h4>${label}</h4><div class="v">${inr0(x.value)}</div><div class="muted small">${x.n} quote${x.n === 1 ? '' : 's'}</div>
+    return `<div class="divcard"><h2>${label}</h2><div class="v">${inr0(x.value)}</div><div class="muted small">${x.n} quote${x.n === 1 ? '' : 's'}</div>
     <div class="hbar"><i style="width:${Math.round(x.value * 100 / maxD)}%"></i></div>
     <a class="btn sm" style="margin-top:10px" href="#/quotes/new/${k}">+ New ${label} quote</a></div>`;
   }).join('')}</div>
-  <div class="grid2"><div class="card"><h3>Quote value — last 6 months</h3>${d.monthly.length ? `<div class="bars">${d.monthly.map(m => `<div class="b" title="${m.n} quotes"><span>${inr0(m.value).replace('₹ ', '')}</span><i style="height:${Math.max(3, Math.round(m.value * 90 / maxM))}%"></i><span>${esc(monthLabel(m.month))}</span></div>`).join('')}</div>` : '<p class="muted">No quotes yet.</p>'}</div>
-  <div class="card"><h3>By status</h3>${['draft', 'sent', 'accepted', 'rejected'].map(k => `<div class="row" style="margin-bottom:6px">${statusChip(k)}<span class="sp"></span><span class="muted small">${g(k).n} quotes</span><b>${inr0(g(k).value)}</b></div>`).join('')}</div></div>
-  ${d.amc_due && d.amc_due.length ? `<div class="card"><h3>AMC / warranty renewals due</h3>${d.amc_due.map(a => { const days = Math.round((new Date(a.amc_end + 'T00:00:00') - new Date(today() + 'T00:00:00')) / 864e5); return `<div class="row" style="margin-bottom:8px"><div style="flex:1;min-width:200px"><a href="#/projects/${a.id}"><b>${esc(a.name)}</b></a> · ${esc(a.client_name || '')}<div class="muted small">${days >= 0 ? 'ends in ' + days + ' day(s)' : '<span class="bad">ended ' + (-days) + ' day(s) ago</span>'} (${esc(fdate(a.amc_end))})${a.amc_note ? ' · ' + esc(a.amc_note) : ''}</div></div><a class="btn sm" target="_blank" rel="noopener" href="${waLink(a.client_phone, `Hello ${a.client_name || ''}, the AMC / warranty for ${a.name} ${days >= 0 ? 'ends on ' + fdate(a.amc_end) : 'ended on ' + fdate(a.amc_end)}. Shall we renew or schedule a maintenance visit? - ${S.settings.company_name}`)}">WhatsApp renewal</a></div>`; }).join('')}</div>` : ''}
-  ${d.follow_up && d.follow_up.length ? `<div class="card"><h3>Follow-ups due — sent 3+ days ago, no reply</h3>${d.follow_up.map(f => { const c = f.client || {}, days = Math.max(3, Math.floor((Date.now() - new Date(f.updated_at.replace(' ', 'T'))) / 864e5)); return `<div class="row" style="margin-bottom:8px"><div style="flex:1;min-width:200px"><a href="#/quotes/${f.id}"><b>${esc(f.quote_no)}</b></a> · ${esc(c.name || '')}<div class="muted small">${days} days ago · ${f.views ? 'viewed ' + f.views + '×' : 'not opened yet'}</div></div><b>${inr0(f.total)}</b><a class="btn sm" target="_blank" rel="noopener" href="${waLink(c.phone, `Hello ${c.contact_person || c.name || ''}, a gentle reminder about our quotation ${f.quote_no} (${inr0(f.total)}). Happy to clarify anything or revise it - ${S.settings.company_name}`)}">WhatsApp reminder</a></div>`; }).join('')}</div>` : ''}
-  <div class="card"><h3>Recent quotes</h3>${quoteTable(d.recent)}</div>`;
+  <div class="grid2"><div class="card"><h2>Quote value — last 6 months</h2>${d.monthly.length ? `<div class="bars">${d.monthly.map(m => `<div class="b" title="${m.n} quotes"><span>${inr0(m.value).replace('₹ ', '')}</span><i style="height:${Math.max(3, Math.round(m.value * 90 / maxM))}%"></i><span>${esc(monthLabel(m.month))}</span></div>`).join('')}</div>` : '<p class="muted">No quotes yet.</p>'}</div>
+  <div class="card"><h2>By status</h2>${['draft', 'sent', 'accepted', 'rejected'].map(k => `<div class="row" style="margin-bottom:6px">${statusChip(k)}<span class="sp"></span><span class="muted small">${g(k).n} quotes</span><b>${inr0(g(k).value)}</b></div>`).join('')}</div></div>
+  ${d.amc_due && d.amc_due.length ? `<div class="card"><h2>AMC / warranty renewals due</h2>${d.amc_due.map(a => { const days = Math.round((new Date(a.amc_end + 'T00:00:00') - new Date(today() + 'T00:00:00')) / 864e5); return `<div class="row" style="margin-bottom:8px"><div style="flex:1;min-width:200px"><a href="#/projects/${a.id}"><b>${esc(a.name)}</b></a> · ${esc(a.client_name || '')}<div class="muted small">${days >= 0 ? 'ends in ' + days + ' day(s)' : '<span class="bad">ended ' + (-days) + ' day(s) ago</span>'} (${esc(fdate(a.amc_end))})${a.amc_note ? ' · ' + esc(a.amc_note) : ''}</div></div><a class="btn sm" target="_blank" rel="noopener" href="${waLink(a.client_phone, `Hello ${a.client_name || ''}, the AMC / warranty for ${a.name} ${days >= 0 ? 'ends on ' + fdate(a.amc_end) : 'ended on ' + fdate(a.amc_end)}. Shall we renew or schedule a maintenance visit? - ${S.settings.company_name}`)}">WhatsApp renewal</a></div>`; }).join('')}</div>` : ''}
+  ${d.follow_up && d.follow_up.length ? `<div class="card"><h2>Follow-ups due — sent 3+ days ago, no reply</h2>${d.follow_up.map(f => { const c = f.client || {}, days = Math.max(3, Math.floor((Date.now() - new Date(f.updated_at.replace(' ', 'T'))) / 864e5)); return `<div class="row" style="margin-bottom:8px"><div style="flex:1;min-width:200px"><a href="#/quotes/${f.id}"><b>${esc(f.quote_no)}</b></a> · ${esc(c.name || '')}<div class="muted small">${days} days ago · ${f.views ? 'viewed ' + f.views + '×' : 'not opened yet'}</div></div><b>${inr0(f.total)}</b><a class="btn sm" target="_blank" rel="noopener" href="${waLink(c.phone, `Hello ${c.contact_person || c.name || ''}, a gentle reminder about our quotation ${f.quote_no} (${inr0(f.total)}). Happy to clarify anything or revise it - ${S.settings.company_name}`)}">WhatsApp reminder</a></div>`; }).join('')}</div>` : ''}
+  <div class="card"><h2>Recent quotes</h2>${quoteTable(d.recent)}</div>`;
 }
 
 /* ---------- quotes list ---------- */
@@ -263,9 +268,9 @@ async function pageQuotes() {
   v.innerHTML = `<div class="page-head"><h1>Quotes</h1><span class="sp"></span>
   <button class="btn" id="qx">Export CSV</button>${Object.entries(DIVS).map(([k, l]) => `<a class="btn ${k === 'roofing' ? 'pri' : ''}" href="#/quotes/new/${k}">+ ${l}</a>`).join('')}</div>
   <div class="card"><div class="row" style="margin-bottom:12px">
-   <input id="qs" placeholder="Search quote no., client, project…" value="${esc(QF.q)}" style="max-width:300px">
-   <select id="qd" style="max-width:170px">${divOptions(QF.division, true)}</select>
-   <select id="qst" style="max-width:150px"><option value="">All statuses</option>${Object.entries(STATUS_LABEL).map(([k, l]) => `<option value="${k}" ${QF.status === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+   <input id="qs" aria-label="Search quotes" placeholder="Search quote no., client, project…" value="${esc(QF.q)}" style="max-width:300px">
+   <select id="qd" aria-label="Filter by division" style="max-width:170px">${divOptions(QF.division, true)}</select>
+   <select id="qst" aria-label="Filter by status" style="max-width:150px"><option value="">All statuses</option>${Object.entries(STATUS_LABEL).map(([k, l]) => `<option value="${k}" ${QF.status === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
    <label class="row small" style="gap:5px"><input type="checkbox" id="qa" ${QF.all ? 'checked' : ''}> Show all revisions</label>
    ${clientName ? `<span class="chip div">Client: ${esc(clientName)} <a href="#" id="cc">✕</a></span>` : ''}</div>
    <div id="ql"><p class="muted">Loading…</p></div></div>`;
@@ -301,7 +306,7 @@ async function pageQuotes() {
 async function pageClients() {
   const v = $('#view'), admin = S.user.role === 'admin';
   v.innerHTML = `<div class="page-head"><h1>Clients</h1><button class="btn pri" data-act="new">+ New client</button></div>
-  <div class="card"><input id="cs" placeholder="Search name, phone, e-mail, GSTIN…" style="max-width:320px;margin-bottom:12px"><div class="scroll"><table class="tbl"><thead><tr><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>GSTIN</th><th class="r">Quotes</th><th></th></tr></thead><tbody id="cb"></tbody></table></div><div id="cm" class="row" style="margin-top:10px"></div></div>`;
+  <div class="card"><input id="cs" aria-label="Search clients" placeholder="Search name, phone, e-mail, GSTIN…" style="max-width:320px;margin-bottom:12px"><div class="scroll"><table class="tbl"><thead><tr><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>GSTIN</th><th class="r">Quotes</th><th><span class="sr">Actions</span></th></tr></thead><tbody id="cb"></tbody></table></div><div id="cm" class="row" style="margin-top:10px"></div></div>`;
   let rows = [], page = 1, total = 0, term = '';
   const draw = () => {
     $('#cb').innerHTML = rows.map(c => `<tr><td><b>${esc(c.name)}</b>${c.anonymized ? ' <span class="chip draft">data erased</span>' : ''}<div class="muted small">${esc(c.address)}</div></td><td>${esc(c.contact_person)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td><td>${esc(c.gstin)}</td>
@@ -371,9 +376,9 @@ async function pageRates() {
   const v = $('#view');
   v.innerHTML = `<div class="page-head"><h1>Rate Cards</h1><button class="btn" data-act="exp">Export CSV</button>${S.user.role === 'admin' ? '<button class="btn" data-act="imp">Import CSV</button><button class="btn pri" data-act="new">+ New item</button>' : ''}<input type="file" id="fi" accept=".csv,text/csv" hidden></div>
   <div class="card"><div class="tabs">${Object.entries(DIVS).map(([k, l]) => `<button data-act="tab" data-d="${k}" class="${k === RF.div ? 'on' : ''}">${l} <span class="muted small">${S.rates.filter(r => r.division === k).length}</span></button>`).join('')}</div>
-  <input id="rs" placeholder="Search items…" value="${esc(RF.q)}" style="max-width:280px;margin-bottom:12px">
+  <input id="rs" aria-label="Search rate card items" placeholder="Search items…" value="${esc(RF.q)}" style="max-width:280px;margin-bottom:12px">
   <p class="muted small" style="margin:0 0 10px">Rates shown are indicative starting values — edit them to your actual costs. Items you mark inactive stay saved but are hidden from the quote picker.</p>
-  <div class="scroll"><table class="tbl"><thead><tr><th>Category</th><th>Item</th><th>Unit</th><th class="r">Rate (₹)</th><th class="r">Cost (₹)</th><th class="r">Margin</th><th></th></tr></thead><tbody id="rb"></tbody></table></div></div>`;
+  <div class="scroll"><table class="tbl"><thead><tr><th>Category</th><th>Item</th><th>Unit</th><th class="r">Rate (₹)</th><th class="r">Cost (₹)</th><th class="r">Margin</th><th><span class="sr">Actions</span></th></tr></thead><tbody id="rb"></tbody></table></div></div>`;
   const draw = () => {
     const f = RF.q.toLowerCase();
     const rows = S.rates.filter(r => r.division === RF.div && (!f || (r.name + r.category).toLowerCase().includes(f)));
@@ -457,18 +462,18 @@ async function pageSettings() {
   const ta = (k, label, rows = 5) => `<label class="f"><span>${label}</span><textarea data-k="${k}" rows="${rows}" style="min-height:${rows * 22}px">${esc(s[k])}</textarea></label>`;
   $('#view').innerHTML = `<div class="page-head"><h1>Settings</h1>${admin ? '<button class="btn pri" data-act="save">Save settings</button>' : '<span class="muted">View only — admin can edit</span>'}</div>
   <fieldset ${admin ? '' : 'disabled'}>
-  <div class="card"><h3>Company (appears on every quotation)</h3><div class="grid2"><div>${inp('company_name', 'Company name')}${inp('company_tagline', 'Tagline')}${ta('company_address', 'Address', 3)}</div>
+  <div class="card"><h2>Company (appears on every quotation)</h2><div class="grid2"><div>${inp('company_name', 'Company name')}${inp('company_tagline', 'Tagline')}${ta('company_address', 'Address', 3)}</div>
   <div>${inp('company_phone', 'Phone')}${inp('company_email', 'Email', 'email')}${inp('company_gstin', 'GSTIN')}${inp('signatory', 'Authorised signatory name')}</div></div>
   <div class="row"><div id="lg">${s.company_logo ? `<img src="${esc(s.company_logo)}" style="max-height:60px;background:#f1f5f9;padding:4px;border-radius:6px">` : '<span class="muted small">No logo</span>'}</div>
   <label class="btn sm">Upload logo<input type="file" id="logo" accept="image/png,image/jpeg" hidden></label><button type="button" class="btn sm" data-act="rmlogo">Remove</button></div></div>
-  <div class="card"><h3>Quote defaults</h3><div class="grid3">${inp('quote_prefix', 'Quote number prefix')}${inp('validity_days', 'Validity (days)', 'number')}${inp('min_margin', 'Low-margin alert below (%)', 'number')}
+  <div class="card"><h2>Quote defaults</h2><div class="grid3">${inp('quote_prefix', 'Quote number prefix')}${inp('validity_days', 'Validity (days)', 'number')}${inp('min_margin', 'Low-margin alert below (%)', 'number')}
   ${Object.entries(DIVS).map(([k, l]) => inp('gst_' + k, 'GST % — ' + l, 'number')).join('')}${Object.entries(DIVS).map(([k, l]) => inp('hsn_' + k, 'HSN / SAC — ' + l)).join('')}</div></div>
-  <div class="card"><h3>Bank details (printed on quotations)</h3>${ta('bank_details', 'Bank details', 5)}</div>
-  <div class="card"><h3>Default terms &amp; conditions (one per line)</h3><div class="grid2">${Object.entries(DIVS).map(([k, l]) => ta('terms_' + k, l, 8)).join('')}</div></div>
-  <div class="card"><h3>Default payment schedule — one stage per line as "Stage name|percent"</h3><div class="grid2">${Object.entries(DIVS).map(([k, l]) => ta('pay_' + k, l, 5)).join('')}</div></div></fieldset>
-  ${admin ? `<div class="card"><h3>Backup &amp; activity log</h3><div class="row"><a class="btn" href="api/index.php?r=backup">Download full backup (JSON)</a><span class="muted small">Quotes, clients, rate cards, projects and settings. Keep a copy regularly - also enable automatic backups in Hostinger hPanel.</span></div><div id="audit" style="margin-top:12px"></div></div>` : ''}
+  <div class="card"><h2>Bank details (printed on quotations)</h2>${ta('bank_details', 'Bank details', 5)}</div>
+  <div class="card"><h2>Default terms &amp; conditions (one per line)</h2><div class="grid2">${Object.entries(DIVS).map(([k, l]) => ta('terms_' + k, l, 8)).join('')}</div></div>
+  <div class="card"><h2>Default payment schedule — one stage per line as "Stage name|percent"</h2><div class="grid2">${Object.entries(DIVS).map(([k, l]) => ta('pay_' + k, l, 5)).join('')}</div></div></fieldset>
+  ${admin ? `<div class="card"><h2>Backup &amp; activity log</h2><div class="row"><a class="btn" href="api/index.php?r=backup">Download full backup (JSON)</a><span class="muted small">Quotes, clients, rate cards, projects and settings. Keep a copy regularly - also enable automatic backups in Hostinger hPanel.</span></div><div id="audit" style="margin-top:12px"></div></div>` : ''}
   ${admin ? '<div class="card" id="aicard"><span class="muted small">Loading…</span></div>' : ''}
-  <div class="card"><h3>Quote templates</h3>${(S.templates || []).length ? `<table class="tbl"><tbody>${S.templates.map(t => `<tr><td><b>${esc(t.name)}</b></td><td>${divChip(t.division)}</td><td class="r">${admin ? `<button class="btn sm dng" data-act="deltpl" data-id="${t.id}">Delete</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted small" style="margin:0">No templates yet. Open any quote and click “Save as template”.</p>'}</div>
+  <div class="card"><h2>Quote templates</h2>${(S.templates || []).length ? `<table class="tbl"><tbody>${S.templates.map(t => `<tr><td><b>${esc(t.name)}</b></td><td>${divChip(t.division)}</td><td class="r">${admin ? `<button class="btn sm dng" data-act="deltpl" data-id="${t.id}">Delete</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted small" style="margin:0">No templates yet. Open any quote and click “Save as template”.</p>'}</div>
   <div class="card" id="seccard"></div>
   ${admin ? '<div class="card" id="mailcard"></div><div class="card" id="syscard"></div><div class="card" id="teamcard"></div>' : ''}`;
   const v = $('#view');

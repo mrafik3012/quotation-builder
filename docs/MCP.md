@@ -2,83 +2,64 @@
 
 The app includes a built-in **Model Context Protocol (MCP) server**, so AI assistants can look things up and draft quotations for you:
 
-> "Price a 100 × 40 ft godown roof in GI, UPVC and PUF and compare." · "Draft a quote for Mr Sharma's 2BHK interior using our rate card." · "Which quotes need a follow-up this week and how much is overdue?"
+> "Provide a roofing quotation for GI sheet, 60 × 30 ft, A-type." · "Compare GI, UPVC and PUF for a 100 × 40 ft godown." · "Draft a quote for Mr Sharma's 2BHK interior from our rate card." · "Which quotes need a follow-up this week and how much is overdue?"
 
-It speaks standard MCP over HTTPS (Streamable HTTP, JSON-RPC 2.0; protocol versions 2025-06-18, 2025-03-26, 2024-11-05), so it works with any MCP client. It is verified against the official MCP TypeScript SDK.
+It speaks standard MCP over HTTPS (Streamable HTTP, JSON-RPC 2.0; protocol versions 2025-06-18, 2025-03-26, 2024-11-05) with **OAuth 2.1** sign-in (what Claude.ai connectors use) and long-lived **access tokens** (Claude Code, Desktop, Cursor, VS Code). Verified against the official MCP TypeScript SDK, including its full OAuth flow.
 
-## Safety model (read this first)
+## What happens when you ask for a roofing quote
+You: *"Provide a roofing quotation for GI sheet for 60x30 ft A type roofing."*
+Claude calls **`create_roofing_quote`** once. The app calculates the roof (A-type = gable, slope, overhangs, wastage), prices every line from **your rate card** (sheets, steel frame, purlins, flashings, gutters, screws, ventilators) and saves a **draft** quote with scope text, payment schedule and terms from your Settings. Claude then tells you the total, its assumptions (frame included? gutters?), and a link to open the draft. If you did not give a client name the draft sits under "Client to be confirmed" and Claude asks you for it.
+For the 60 × 30 ft example with the starter rates that is about **₹9.36 lakh incl. GST** (₹4.1 lakh of it the steel frame; say "sheets only, existing frame" and Claude passes `include_structure=false`). Ask for "GI, UPVC and PUF" and you get **one quote with the three materials as options** the client can choose between.
+**A person always reviews and sends the quote** - the AI cannot send, accept or delete anything.
 
+## Safety model
 | | |
 |---|---|
-| **Authentication** | Bearer tokens created by an admin in **Settings → AI assistants**. Only a SHA-256 hash is stored; the token is shown once. |
-| **Read-only by default** | A token is *Read only* or *Read + draft*. |
-| **Drafts only** | Write tools can create/edit **draft** quotes, add clients and site-log notes. They **cannot** send a quote to a client, accept/reject, delete anything, record payments, change settings, manage users or download backups. A person reviews every AI draft in the app. |
-| **Costs hidden** | Your cost prices and margins are hidden from the AI unless you tick *show costs* when creating the token. Keep this off for any assistant that might talk to clients. |
-| **Expiry & revoke** | Tokens can expire (30/90/365 days) and be revoked instantly. |
-| **Rate limits** | 120 calls/minute per token; repeated bad tokens are throttled. |
-| **Audit** | Every write call is recorded in Settings → Activity log as `mcp.<tool>` by `AI: <token name>`. |
-| **Same rules as the app** | Same validation, same GST and rounding maths, same quote numbering, locks and limits. |
+| **Sign-in** | OAuth: an **admin** must approve each connection on a consent screen (PKCE, CSRF-protected, shows where the browser returns to) and chooses the access level. Or an admin creates a token in **Settings → AI assistants**. |
+| **Read-only by default** | Access is *Read only* or *Read + draft*. |
+| **Drafts only** | Write tools can create/edit **draft** quotes, add clients and site-log notes. They **cannot** send a quote, accept/reject, delete, record payments, change settings, manage users or download backups. |
+| **Costs hidden** | Your cost prices and margins are hidden unless an admin explicitly allows them. |
+| **Short-lived access** | OAuth access tokens last 1 hour; refresh tokens rotate on every use and a replayed token closes the whole connection. Tokens are stored as hashes. Admins can disconnect any app instantly (Settings → AI assistants) and switch OAuth off entirely. |
+| **Limits & audit** | 120 calls/minute per token; every write is recorded in the audit log as `mcp.<tool>` by `AI: <name>`. |
+| **Same rules as the app** | Same validation, GST/rounding maths, quote numbering, locks and limits. |
 
 ## Connect a client
-
-1. Sign in as admin → **Settings → AI assistants (MCP)** → create a token. Copy the ready-made snippet shown (it already contains your server address and token).
-2. Use the snippet for your tool:
+**Claude.ai (web) / other connector apps - no token needed**
+1. Claude → *Settings → Connectors → Add custom connector*; paste the **server address** from Settings → AI assistants in the app (`https://YOUR-DOMAIN/api/mcp.php`).
+2. A sign-in page from your app opens: sign in as an admin, choose *Read only* or *Read + create draft quotes*, press **Allow**.
 
 **Claude Code**
 ```bash
 claude mcp add --transport http infraura https://YOUR-DOMAIN/api/mcp.php --header "Authorization: Bearer qbmcp_xxxxxxxx"
 ```
-
-**Claude Desktop** (and other apps that only run local servers) via the `mcp-remote` bridge — add to the config file:
+**Claude Desktop** (via the `mcp-remote` bridge) - config file:
 ```json
 { "mcpServers": { "infraura": { "command": "npx", "args": ["-y", "mcp-remote", "https://YOUR-DOMAIN/api/mcp.php", "--header", "Authorization: Bearer qbmcp_xxxxxxxx"] } } }
 ```
+**Cursor / Windsurf** `mcp.json`: `{ "mcpServers": { "infraura": { "url": "https://YOUR-DOMAIN/api/mcp.php", "headers": { "Authorization": "Bearer qbmcp_xxxxxxxx" } } } }`
+**VS Code** `.vscode/mcp.json`: `{ "servers": { "infraura": { "type": "http", "url": "https://YOUR-DOMAIN/api/mcp.php", "headers": { "Authorization": "Bearer qbmcp_xxxxxxxx" } } } }`
+**curl test:** `curl -s https://YOUR-DOMAIN/api/mcp.php -H "Authorization: Bearer qbmcp_xxxxxxxx" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`
+Explore with the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) (`npx @modelcontextprotocol/inspector`, transport *Streamable HTTP*).
 
-**Cursor / Windsurf** (`mcp.json`)
-```json
-{ "mcpServers": { "infraura": { "url": "https://YOUR-DOMAIN/api/mcp.php", "headers": { "Authorization": "Bearer qbmcp_xxxxxxxx" } } } }
-```
-
-**VS Code** (`.vscode/mcp.json`)
-```json
-{ "servers": { "infraura": { "type": "http", "url": "https://YOUR-DOMAIN/api/mcp.php", "headers": { "Authorization": "Bearer qbmcp_xxxxxxxx" } } } }
-```
-
-**Test with curl**
-```bash
-curl -s https://YOUR-DOMAIN/api/mcp.php -H "Authorization: Bearer qbmcp_xxxxxxxx" -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-```
-
-You can also explore it with the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) (`npx @modelcontextprotocol/inspector`, transport *Streamable HTTP*, add the `Authorization` header).
-
-> **Claude.ai web "custom connectors"** currently expect OAuth sign-in. This server uses bearer tokens, so use Claude Code / Claude Desktop (above) for now. OAuth 2.1 with dynamic client registration is the planned next step - the tool layer is protocol-independent, so adding it does not change any tool.
-
-Always use **HTTPS** in production.
+Always use **HTTPS**. OAuth discovery lives at `/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server` (and `/api/.well-known/openid-configuration`); the bundled `.htaccess` files route these. If your app is in a sub-folder, the MCP server still announces its metadata URL in the `WWW-Authenticate` header, so connectors find it.
 
 ## Tools
-
 | Tool | Access | What it does |
 |---|---|---|
-| `get_business_overview` | read | Pipeline by status/division, recent quotes, follow-ups due, receivables |
-| `search_quotes` | read | Find quotes by text / status / division |
-| `get_quote` | read | Full quote: lines, options, GST, totals, payment schedule, client activity, project link |
-| `calculate_quote_totals` | read | Exact totals (same rounding as the app) for qty × rate lines, discount, GST |
-| `list_clients` | read | Search the client book |
-| `search_rate_card` | read | Find real priced items (returns `rate_item_id`) |
-| `calculate_roof` | read | Roof area/slope/wastage, steel, flashings, gutters, fasteners; priced packages for GI / UPVC / PUF / aluminium / polycarbonate… with ready-to-use lines |
-| `list_projects`, `get_project` | read | Contract value, milestones, payments, variations, site log |
-| `get_reports_summary` | read | Win rate, monthly trend, salesperson, lead source, aging, receivables |
-| `create_client` | write | Add a client (idempotent by name) |
-| `create_quote_draft` | write | Create a **draft** from rate-card items or custom lines; defaults GST, payment schedule and terms from Settings |
-| `update_quote_draft` | write | Edit a **draft** (latest revision) only |
-| `add_project_log` | write | Add a site update to a project |
+| `create_roofing_quote` | write | **One step**: calculate + price + save a draft roofing quote (A-type/shed/flat, any material, optional several materials as options, optional sheets-only) |
+| `calculate_roof` | read | Roof geometry and priced packages for GI / UPVC / PUF / aluminium / polycarbonate… with ready-to-use lines |
+| `get_business_overview` | read | Pipeline, recent quotes, follow-ups, receivables, AMC renewals |
+| `search_quotes`, `get_quote` | read | Find quotes; full detail incl. options, GST, totals, client activity |
+| `calculate_quote_totals` | read | Exact totals (same rounding as the app) |
+| `list_clients`, `search_rate_card` | read | Client book; priced catalogue (returns `rate_item_id`) |
+| `list_projects`, `get_project` | read | Contract value, milestones, payments, credit notes, variations, AMC date, site log |
+| `get_reports_summary` | read | Win rate, trend, salesperson, lead source, aging, receivables |
+| `create_client`, `create_quote_draft`, `update_quote_draft`, `add_project_log` | write | Add a client (idempotent); create/edit **draft** quotes from rate-card items or custom lines; add a site note |
 
-**Prompts** (ready-made workflows): `draft_quote_from_brief`, `compare_roofing_options`, `weekly_sales_review`.
+**Prompts:** `draft_quote_from_brief`, `compare_roofing_options`, `weekly_sales_review`.
 
 ## Operating notes
-
-- **Apache/LiteSpeed header pass-through:** `api/.htaccess` already forwards the `Authorization` header to PHP. If you get `401 Authentication required` with a correct token, check that file is deployed and `mod_rewrite` is enabled.
-- **Upgrades:** the database upgrades itself the first time an admin signs in after uploading new files (`api/migrate.php`).
-- **Versioning:** server version is reported in `initialize` (`serverInfo.version`). New tools are additive; existing tool names and argument names are kept stable.
-- **Tests:** `node tests/mcp.test.js` (protocol, auth, scopes, drafts-only safety) and `node tests/roof_parity.js` (the server roof calculator matches the in-app one).
+- **Header pass-through:** `api/.htaccess` forwards `Authorization` to PHP. Getting `401` with a correct token? Check that file is deployed and `mod_rewrite` is on.
+- **Upgrades:** the database upgrades itself on the first admin sign-in after uploading new files.
+- **Versioning:** the server version is in `initialize` (`serverInfo.version`); new tools are additive and existing names/arguments stay stable.
+- **Tests:** `tests/mcp.test.js` (protocol, auth, scopes, drafts-only safety, the roofing flow), `tests/oauth.test.js` (29 checks), `tests/roof_parity.js` (server roof calculator = in-app calculator).
