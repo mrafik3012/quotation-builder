@@ -122,7 +122,7 @@ let lastHash = '';
 function layout() {
   const s = S.settings, logo = s.company_logo ? `<img src="${esc(s.company_logo)}" alt="">` : '<img class="logo" src="assets/logo.png" alt="Infraura">';
   $('#app').innerHTML = `<div class="shell"><aside class="side noprint"><div class="brand">${logo}<b>${esc(s.company_name || 'Infraura')}</b><small>Quotation Builder</small></div>
-  <nav><a href="#/dashboard" data-n="dashboard">Dashboard</a><a href="#/quotes" data-n="quotes">Quotes</a><a href="#/projects" data-n="projects">Projects</a><a href="#/clients" data-n="clients">Clients</a><a href="#/rates" data-n="rates">Rate Cards</a><a href="#/settings" data-n="settings">Settings</a></nav>
+  <nav><a href="#/dashboard" data-n="dashboard">Dashboard</a><a href="#/quotes" data-n="quotes">Quotes</a><a href="#/projects" data-n="projects">Projects</a><a href="#/reports" data-n="reports">Reports</a><a href="#/clients" data-n="clients">Clients</a><a href="#/rates" data-n="rates">Rate Cards</a><a href="#/settings" data-n="settings">Settings</a></nav>
   <div class="userbox">${esc(S.user.name)}<br>${esc(S.user.email)}<button id="lo">Sign out</button></div></aside><main class="main"><div id="view"></div></main></div>`;
   $('#lo').onclick = logout;
 }
@@ -152,7 +152,8 @@ async function route() {
       if (!p[1]) await pageProjects();
       else if (p[2] === 'invoice') await pageInvoice(+p[1], +p[3]);
       else await pageProject(+p[1]);
-    } else if (p[0] === 'clients') await pageClients();
+    } else if (p[0] === 'reports') await pageReports();
+    else if (p[0] === 'clients') await pageClients();
     else if (p[0] === 'rates') await pageRates();
     else if (p[0] === 'settings') await pageSettings();
     else { location.hash = '#/dashboard'; }
@@ -206,7 +207,7 @@ async function pageQuotes() {
   const v = $('#view');
   const clientName = QF.client_id ? (S.clients.find(c => c.id == QF.client_id) || {}).name : '';
   v.innerHTML = `<div class="page-head"><h1>Quotes</h1><span class="sp"></span>
-  ${Object.entries(DIVS).map(([k, l]) => `<a class="btn ${k === 'roofing' ? 'pri' : ''}" href="#/quotes/new/${k}">+ ${l}</a>`).join('')}</div>
+  <button class="btn" id="qx">Export CSV</button>${Object.entries(DIVS).map(([k, l]) => `<a class="btn ${k === 'roofing' ? 'pri' : ''}" href="#/quotes/new/${k}">+ ${l}</a>`).join('')}</div>
   <div class="card"><div class="row" style="margin-bottom:12px">
    <input id="qs" placeholder="Search quote no., client, project…" value="${esc(QF.q)}" style="max-width:300px">
    <select id="qd" style="max-width:170px">${divOptions(QF.division, true)}</select>
@@ -218,7 +219,7 @@ async function pageQuotes() {
     const qs = new URLSearchParams();
     if (QF.q) qs.set('q', QF.q); if (QF.status) qs.set('status', QF.status);
     if (QF.division) qs.set('division', QF.division); if (QF.all) qs.set('all', '1'); if (QF.client_id) qs.set('client_id', QF.client_id);
-    const rows = await api('quotes' + (qs.toString() ? '&' + qs : ''));
+    const rows = await api('quotes' + (qs.toString() ? '&' + qs : '')); QF.rows = rows;
     $('#ql').innerHTML = quoteTable(rows) + (rows.length ? `<p class="muted small" style="margin:10px 0 0">${rows.length} quote${rows.length === 1 ? '' : 's'} · total ${inr0(rows.filter(r => r.status !== 'superseded').reduce((a, r) => a + r.total, 0))}</p>` : '');
   };
   let tm; const reload = () => { clearTimeout(tm); tm = setTimeout(() => guard(load), 200); };
@@ -226,6 +227,10 @@ async function pageQuotes() {
   $('#qd').onchange = e => { QF.division = e.target.value; reload(); };
   $('#qst').onchange = e => { QF.status = e.target.value; reload(); };
   $('#qa').onchange = e => { QF.all = e.target.checked; reload(); };
+  $('#qx').onclick = () => {
+    const rows = QF.rows || [], head = ['quote_no', 'rev', 'division', 'client', 'title', 'status', 'quote_date', 'valid_until', 'subtotal', 'discount', 'gst', 'total'];
+    download('quotes.csv', [head.join(',')].concat(rows.map(r => [r.quote_no, r.rev, DIVS[r.division], (r.client || {}).name, r.title, r.status, r.quote_date, r.valid_until, r.subtotal, r.discount, r.tax, r.total].map(csvCell).join(','))).join('\n'));
+  };
   const cc = $('#cc'); if (cc) cc.onclick = e => { e.preventDefault(); QF.client_id = ''; pageQuotes(); };
   await load();
 }
@@ -293,7 +298,7 @@ const csvCell = s => { s = String(s ?? ''); return /[",\n]/.test(s) ? '"' + s.re
 async function pageRates() {
   S.rates = await api('rates');
   const v = $('#view');
-  v.innerHTML = `<div class="page-head"><h1>Rate Cards</h1><button class="btn" data-act="exp">Export CSV</button><button class="btn" data-act="imp">Import CSV</button><button class="btn pri" data-act="new">+ New item</button><input type="file" id="fi" accept=".csv,text/csv" hidden></div>
+  v.innerHTML = `<div class="page-head"><h1>Rate Cards</h1><button class="btn" data-act="exp">Export CSV</button>${S.user.role === 'admin' ? '<button class="btn" data-act="imp">Import CSV</button><button class="btn pri" data-act="new">+ New item</button>' : ''}<input type="file" id="fi" accept=".csv,text/csv" hidden></div>
   <div class="card"><div class="tabs">${Object.entries(DIVS).map(([k, l]) => `<button data-act="tab" data-d="${k}" class="${k === RF.div ? 'on' : ''}">${l} <span class="muted small">${S.rates.filter(r => r.division === k).length}</span></button>`).join('')}</div>
   <input id="rs" placeholder="Search items…" value="${esc(RF.q)}" style="max-width:280px;margin-bottom:12px">
   <p class="muted small" style="margin:0 0 10px">Rates shown are indicative starting values — edit them to your actual costs. Items you mark inactive stay saved but are hidden from the quote picker.</p>
@@ -302,7 +307,7 @@ async function pageRates() {
     const f = RF.q.toLowerCase();
     const rows = S.rates.filter(r => r.division === RF.div && (!f || (r.name + r.category).toLowerCase().includes(f)));
     $('#rb').innerHTML = rows.map(r => `<tr style="${r.active ? '' : 'opacity:.5'}"><td class="muted nw">${esc(r.category)}</td><td>${esc(r.name)}${r.description ? `<div class="muted small">${esc(r.description)}</div>` : ''}</td><td>${esc(r.unit)}</td><td class="r nw"><b>${fmt(r.rate)}</b></td><td class="r nw muted">${r.cost ? fmt(r.cost) : '—'}</td><td class="r nw">${r.cost && r.rate ? `<span class="${(r.rate - r.cost) / r.rate * 100 < n(S.settings.min_margin) ? 'bad' : ''}">${Math.round((r.rate - r.cost) / r.rate * 100)}%</span>` : '—'}</td>
-    <td class="nw r"><button class="btn sm" data-act="edit" data-id="${r.id}">Edit</button> <button class="btn sm dng" data-act="del" data-id="${r.id}">Delete</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No items. Add one or import a CSV.</td></tr>';
+    <td class="nw r">${S.user.role === 'admin' ? `<button class="btn sm" data-act="edit" data-id="${r.id}">Edit</button> <button class="btn sm dng" data-act="del" data-id="${r.id}">Delete</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">No items. Add one or import a CSV.</td></tr>';
   };
   draw();
   $('#rs').oninput = e => { RF.q = e.target.value; draw(); };
@@ -360,7 +365,7 @@ function rateModal(r) {
 }
 
 /* ---------- settings ---------- */
-function downscaleImage(file, maxW, maxH) {
+function downscaleImage(file, maxW, maxH, jpeg, quality = 0.9) {
   return new Promise((resolve, reject) => {
     const img = new Image(), url = URL.createObjectURL(file);
     img.onload = () => {
@@ -368,7 +373,7 @@ function downscaleImage(file, maxW, maxH) {
       const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
       c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
       URL.revokeObjectURL(url);
-      resolve(c.toDataURL(file.type === 'image/png' ? 'image/png' : 'image/jpeg', 0.9));
+      resolve(c.toDataURL(!jpeg && file.type === 'image/png' ? 'image/png' : 'image/jpeg', quality));
     };
     img.onerror = () => reject(new Error('Could not read that image'));
     img.src = url;
@@ -390,6 +395,7 @@ async function pageSettings() {
   <div class="card"><h3>Bank details (printed on quotations)</h3>${ta('bank_details', 'Bank details', 5)}</div>
   <div class="card"><h3>Default terms &amp; conditions (one per line)</h3><div class="grid2">${Object.entries(DIVS).map(([k, l]) => ta('terms_' + k, l, 8)).join('')}</div></div>
   <div class="card"><h3>Default payment schedule — one stage per line as "Stage name|percent"</h3><div class="grid2">${Object.entries(DIVS).map(([k, l]) => ta('pay_' + k, l, 5)).join('')}</div></div></fieldset>
+  ${admin ? `<div class="card"><h3>Backup &amp; activity log</h3><div class="row"><a class="btn" href="api/index.php?r=backup">Download full backup (JSON)</a><span class="muted small">Quotes, clients, rate cards, projects and settings. Keep a copy regularly - also enable automatic backups in Hostinger hPanel.</span></div><div id="audit" style="margin-top:12px"></div></div>` : ''}
   <div class="card"><h3>Quote templates</h3>${(S.templates || []).length ? `<table class="tbl"><tbody>${S.templates.map(t => `<tr><td><b>${esc(t.name)}</b></td><td>${divChip(t.division)}</td><td class="r">${admin ? `<button class="btn sm dng" data-act="deltpl" data-id="${t.id}">Delete</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted small" style="margin:0">No templates yet. Open any quote and click “Save as template”.</p>'}</div>
   <div class="grid2"><div class="card"><h3>Change my password</h3><form id="pw"><label class="f"><span>Current password</span><input type="password" name="current" required></label><label class="f"><span>New password (min 8)</span><input type="password" name="new" minlength="8" required></label><button class="btn">Update password</button></form></div>
   ${admin ? `<div class="card"><h3>Team</h3><div id="ul"></div><form id="uf" style="margin-top:12px"><div class="grid2"><label class="f"><span>Name</span><input name="name" required></label><label class="f"><span>Email</span><input name="email" type="email" required></label><label class="f"><span>Password</span><input name="password" type="password" minlength="8" required></label><label class="f"><span>Role</span><select name="role"><option value="staff">Staff</option><option value="admin">Admin</option></select></label></div><button class="btn">Add user</button></form></div>` : ''}</div>`;
@@ -418,6 +424,7 @@ async function pageSettings() {
     $('#ul').innerHTML = `<table class="tbl"><tbody>${us.map(u => `<tr><td><b>${esc(u.name)}</b><div class="muted small">${esc(u.email)}</div></td><td>${esc(u.role)}</td><td class="r">${u.id === S.user.id ? '<span class="muted small">you</span>' : `<button class="btn sm dng" data-act="deluser" data-id="${u.id}">Remove</button>`}</td></tr>`).join('')}</tbody></table>`;
   }
   if (admin) {
+    api('audit').then(a => { $('#audit').innerHTML = a.length ? `<div class="small" style="max-height:220px;overflow:auto">${a.map(x => `<div class="row" style="margin-bottom:3px"><span class="muted nw">${esc(x.created_at.slice(0, 16))}</span><span class="nw">${esc(x.user_name)}</span><span><b>${esc(x.action)}</b> ${esc(x.detail)}</span></div>`).join('')}</div>` : '<span class="muted small">No activity recorded yet.</span>'; }).catch(() => {});
     await loadUsers();
     $('#uf').onsubmit = e => { e.preventDefault(); const f = e.target; guard(async () => { await api('users', 'POST', Object.fromEntries(new FormData(f))); toast('User added', 'ok'); f.reset(); loadUsers(); }); };
   }

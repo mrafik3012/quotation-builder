@@ -22,7 +22,7 @@ function normalizeQuote() {
   d.tax_rate = d.tax_rate ?? 18;
   d.payment_schedule = Array.isArray(d.payment_schedule) ? d.payment_schedule : [];
   d.terms = Array.isArray(d.terms) ? d.terms : [];
-  d.gst_mode = d.gst_mode || ''; d.hsn = d.hsn || ''; d.notes = d.notes || ''; d.scope = d.scope || ''; d.site_address = d.site_address || ''; d.area_sqft = d.area_sqft || '';
+  d.source = d.source || ''; d.gst_mode = d.gst_mode || ''; d.hsn = d.hsn || ''; d.notes = d.notes || ''; d.scope = d.scope || ''; d.site_address = d.site_address || ''; d.area_sqft = d.area_sqft || '';
   d.options = Array.isArray(d.options) ? d.options.map(o => ({ name: o.name || '', note: o.note || '', sections: Array.isArray(o.sections) ? o.sections : [] })) : [];
   d.selected_option = d.options.length ? Math.min(Math.max(+d.selected_option || 0, 0), d.options.length - 1) : 0;
   d.pmc = d.pmc && typeof d.pmc === 'object' ? d.pmc : { mode: 'percent', base_cost: '', percent: 4, area: '', per_sqft: 60, months: '', monthly_fee: 85000 };
@@ -89,6 +89,8 @@ function drawEditor() {
    ${isNew || ro ? '' : `<select id="stsel" style="width:auto"><option disabled>Status…</option>${['draft', 'sent', 'accepted', 'rejected'].map(k => `<option value="${k}" ${Q.status === k ? 'selected' : ''}>${STATUS_LABEL[k]}</option>`).join('')}</select>`}
    <span class="sp"></span>
    ${isNew || ro ? '' : '<button class="btn" data-act="revise">New revision</button>'}
+   ${Q.division === 'interior' && !ro ? '<button class="btn" data-act="rooms">+ Add rooms</button>' : ''}
+   ${isNew ? '' : '<button class="btn" data-act="csv">Export lines (CSV)</button>'}
    ${ro ? '' : '<button class="btn" data-act="savetpl" title="Reuse these sections on future quotes">Save as template</button>'}
    ${isNew ? '' : '<button class="btn" data-act="dup">Duplicate</button>'}
    ${isNew || Q.status !== 'draft' ? '' : '<button class="btn dng" data-act="del">Delete</button>'}
@@ -110,6 +112,7 @@ function drawEditor() {
     <div class="grid3"><label class="f"><span>Built-up / project area (sq ft)</span><input type="number" step="any" min="0" data-b="data.area_sqft" value="${esc(Q.data.area_sqft)}"></label>
     <label class="f"><span>Quote date</span><input type="date" data-b="quote_date" value="${esc(Q.quote_date)}"></label>
     <label class="f"><span>Valid until</span><input type="date" data-b="valid_until" value="${esc(Q.valid_until)}"></label></div>
+    <label class="f"><span>Lead source (internal, for reports)</span><select data-b="data.source"><option value="">—</option>${['Referral', 'Walk-in', 'Website', 'WhatsApp', 'Instagram', 'Facebook', 'Google', 'Repeat client', 'Tender', 'Other'].map(x => `<option ${Q.data.source === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
     <label class="f"><span>Scope of work (printed above the items)</span><textarea data-b="data.scope" rows="3">${esc(Q.data.scope)}</textarea></label></div>
   </div>
   <div id="pmcbox"></div>
@@ -220,7 +223,7 @@ function secHtml(si) {
    <td style="width:96px"><input data-f="qty" type="number" step="any" min="0" value="${esc(it.qty)}"></td><td style="width:116px"><input data-f="rate" type="number" step="any" min="0" value="${esc(it.rate)}"></td><td style="width:100px"><input data-f="cost" type="number" step="any" min="0" value="${esc(it.cost ?? '')}" title="Your cost - internal only" style="color:var(--mut)"></td>
    <td class="amt" style="width:120px" id="a-${si}-${ii}"></td><td style="width:34px"><button class="btn sm dng" data-act="delitem" title="Remove">✕</button></td></tr>`).join('')}
   </tbody></table></div>
-  <div class="sec-f"><button class="btn sm" data-act="addrate">+ From rate card</button><button class="btn sm" data-act="additem">+ Custom item</button></div></div>`;
+  <div class="sec-f"><button class="btn sm" data-act="addrate">+ From rate card</button><button class="btn sm" data-act="additem">+ Custom item</button>${Q.division === 'interior' || (s.images || []).length ? '<button class="btn sm" data-act="secimg" title="Add a photo or render shown under this section on the quotation">+ Image</button>' : ''}${(s.images || []).map((im, k) => `<span><img src="${im}" style="height:34px;border-radius:4px;vertical-align:middle"><a href="#" data-act="delimg" data-k="${k}" style="margin-left:2px" title="Remove">✕</a></span>`).join('')}</div></div>`;
 }
 function drawSections() {
   $('#sections').innerHTML = Q.data.sections.map((_, i) => secHtml(i)).join('');
@@ -314,6 +317,10 @@ function wireEditor() {
     else if (a === 'save') guard(saveQuote);
     else if (a === 'share') guard(shareQuote);
     else if (a === 'toproject') guard(async () => { await ensureSaved(); const r = await api('projects', 'POST', { quote_id: Q.id }); toast('Project created', 'ok'); location.hash = '#/projects/' + r.id; });
+    else if (a === 'rooms') roomsModal();
+    else if (a === 'csv') exportLines();
+    else if (a === 'secimg') addSecImage(si);
+    else if (a === 'delimg') { e.preventDefault(); Q.data.sections[si].images.splice(+t.dataset.k, 1); markDirty(); drawSections(); }
     else if (a === 'usetpl') useTemplate();
     else if (a === 'savetpl') saveTemplate();
     else if (a === 'roofcalc') openRoofCalc();
@@ -331,6 +338,43 @@ function wireEditor() {
     else if (a === 'del') { if (confirmBox('Delete this draft quote (all revisions)? This cannot be undone.')) guard(async () => { await api('quotes/' + Q.id, 'DELETE'); window.__dirty = false; toast('Deleted', 'ok'); location.hash = '#/quotes'; }); }
   };
   $$('#view textarea').forEach(growTa);
+}
+
+const ROOMS = ['Living Room', 'Dining Area', 'Kitchen', 'Master Bedroom', 'Bedroom 2', 'Bedroom 3', 'Kids Room', 'Guest Room', 'Bathrooms', 'Balcony', 'Pooja Room', 'Study / Home Office', 'Foyer / Entrance', 'Utility / Wash Area', 'Whole house (ceiling, paint, electrical)'];
+function roomsModal() {
+  const m = openModal(`<h2>Add rooms</h2><p class="muted small" style="margin-top:0">Creates one section per room so the quote and its subtotals read room by room. Add items from the rate card inside each room.</p>
+  <div class="pmc-modes" id="rl">${ROOMS.map(r => `<label><input type="checkbox" value="${esc(r)}">${esc(r)}</label>`).join('')}</div>
+  <div class="row" style="margin-top:8px"><input id="rc" placeholder="Other room (optional)" style="flex:1"><span class="sp"></span><button class="btn" id="rx2">Cancel</button><button class="btn pri" id="rok">Add</button></div>`, true);
+  $$('#rl label', m.el).forEach(l => { l.querySelector('input').onchange = () => l.classList.toggle('on', l.querySelector('input').checked); });
+  $('#rx2', m.el).onclick = m.close;
+  $('#rok', m.el).onclick = () => {
+    const names = $$('#rl input:checked', m.el).map(x => x.value), o = $('#rc', m.el).value.trim(); if (o) names.push(o);
+    if (!names.length) { m.close(); return; }
+    const secs = Q.data.sections;
+    if (secs.length === 1 && !secs[0].items.length && (!secs[0].title || secs[0].title === SEC_TITLE[Q.division])) secs.splice(0, 1);
+    names.forEach(nm => secs.push({ title: nm, items: [], images: [] }));
+    markDirty(); drawSections(); m.close(); toast(names.length + ' room(s) added', 'ok');
+  };
+}
+function addSecImage(si) {
+  const f = document.createElement('input'); f.type = 'file'; f.accept = 'image/png,image/jpeg';
+  f.onchange = () => guard(async () => {
+    const file = f.files[0]; if (!file) return;
+    const sec = Q.data.sections[si]; sec.images = sec.images || [];
+    if (sec.images.length >= 3) throw new Error('Up to 3 images per section');
+    let q = 0.8, data = await downscaleImage(file, 900, 700, true, q);
+    while (data.length > 200000 && q > 0.3) { q -= 0.15; data = await downscaleImage(file, 900, 700, true, q); }
+    if (data.length > 200000) throw new Error('Image is too large - try a smaller photo');
+    sec.images.push(data); markDirty(); drawSections();
+  });
+  f.click();
+}
+function exportLines() {
+  const d = Q.data, rows = [['section', 'no', 'description', 'unit', 'qty', 'rate', 'amount']];
+  effSections(d).forEach((s, si) => s.items.forEach((it, ii) => rows.push([s.title, `${si + 1}.${ii + 1}`, it.desc, it.unit, it.qty, it.rate, r2(n(it.qty) * n(it.rate))])));
+  const t = totals(d);
+  rows.push([], ['', '', 'Subtotal', '', '', '', t.sub], ['', '', 'Discount', '', '', '', t.disc], ['', '', 'GST', '', '', '', t.tax], ['', '', 'Grand total', '', '', '', t.total]);
+  download((Q.quote_no || 'quote').replace(/\//g, '-') + '.csv', rows.map(r => r.map(csvCell).join(',')).join('\n'));
 }
 
 function applyPmc() {
@@ -420,6 +464,7 @@ function quoteDocHtml(s) {
     if (!sec.items.length) return;
     const multi = d.sections.filter(x => x.items.length).length > 1;
     if (multi || sec.title) body += `<tr class="st"><td colspan="6">${esc(sec.title || 'Items')}</td></tr>`;
+    if ((sec.images || []).length) body += `<tr><td colspan="6" style="border:0">${sec.images.map(im => `<img src="${im}" style="height:120px;margin:4px 8px 4px 0;border-radius:4px">`).join('')}</td></tr>`;
     let st = 0;
     sec.items.forEach((it, ii) => {
       const a = r2(n(it.qty) * n(it.rate)); st += a;

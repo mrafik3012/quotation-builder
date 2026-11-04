@@ -92,6 +92,7 @@ function route(string $m, string $a, ?string $b, ?string $c): void
                     if ($k === 'company_logo' && strlen($v) > 600000) fail('Logo too large (max ~400 KB)');
                     set_setting($k, $v);
                 }
+                audit($user, 'settings.save', 'Company / defaults updated');
                 json_out(all_settings());
             }
             break;
@@ -108,10 +109,12 @@ function route(string $m, string $a, ?string $b, ?string $c): void
                 $role = ($d['role'] ?? '') === 'admin' ? 'admin' : 'staff';
                 q('INSERT INTO users (name,email,password_hash,role,created_at) VALUES (?,?,?,?,?)',
                     [str($d['name'] ?? '', 120) ?: 'User', $email, password_hash((string)$d['password'], PASSWORD_DEFAULT), $role, now()]);
+                audit($user, 'user.add', $email . ' (' . $role . ')');
                 json_out(['ok' => true], 201);
             }
             if ($m === 'DELETE' && $b !== null) {
                 if ((int)$b === $user['id']) fail('You cannot delete yourself');
+                audit($user, 'user.delete', '#' . (int)$b);
                 q('DELETE FROM users WHERE id = ?', [(int)$b]);
                 json_out(['ok' => true]);
             }
@@ -128,6 +131,17 @@ function route(string $m, string $a, ?string $b, ?string $c): void
         case 'templates':
             templates_route($m, $b);
             break;
+
+        case 'reports':
+            json_out(reports());
+
+        case 'audit':
+            require_admin();
+            json_out(q('SELECT user_name,action,detail,created_at FROM audit_log ORDER BY id DESC LIMIT 150')->fetchAll());
+
+        case 'backup':
+            require_admin();
+            backup_download();
 
         case 'projects':
             projects_route($m, array_slice($GLOBALS['parts'], 1), $user);
@@ -209,6 +223,7 @@ function rate_fields(array $d): array
 
 function rates_route(string $m, ?string $b): void
 {
+    if ($m !== 'GET') require_admin();
     if ($m === 'GET') json_out(rates_list(isset($_GET['division']) ? (string)$_GET['division'] : null));
     if ($m === 'POST' && $b === 'import') {
         $d = body();
@@ -306,7 +321,11 @@ function clean_sections($in): array
                 'qty' => num($it['qty'] ?? 0), 'rate' => num($it['rate'] ?? 0), 'cost' => max(num($it['cost'] ?? 0), 0), 'note' => str($it['note'] ?? '', 500),
             ];
         }
-        $secs[] = ['title' => str($s['title'] ?? '', 190), 'items' => $items];
+        $imgs = [];
+        foreach ((is_array($s['images'] ?? null) ? $s['images'] : []) as $im) {
+            if (is_string($im) && count($imgs) < 3 && strlen($im) <= 220000 && preg_match('#^data:image/(jpeg|png);base64,[A-Za-z0-9+/=]+$#', $im)) $imgs[] = $im;
+        }
+        $secs[] = ['title' => str($s['title'] ?? '', 190), 'items' => $items, 'images' => $imgs];
     }
     return $secs;
 }
@@ -352,6 +371,7 @@ function clean_quote_input(array $d, ?string $existingDivision = null): array
         'roofcalc' => clean_roofcalc($data['roofcalc'] ?? null),
         'gst_mode' => in_array($data['gst_mode'] ?? '', ['intra', 'inter'], true) ? $data['gst_mode'] : '',
         'hsn' => str($data['hsn'] ?? '', 20),
+        'source' => str($data['source'] ?? '', 40),
     ];
     $c = is_array($d['client'] ?? null) ? $d['client'] : [];
     $client = ['name' => str($c['name'] ?? '', 190), 'contact_person' => str($c['contact_person'] ?? '', 120), 'phone' => str($c['phone'] ?? '', 40),
@@ -415,6 +435,7 @@ function quotes_route(string $m, ?string $b, ?string $c, array $user): void
         $no = next_quote_no($division, $date);
         q('INSERT INTO quotes (quote_no,rev,is_latest,division,client_id,client_json,title,status,quote_date,valid_until,data,subtotal,discount,tax,round_off,total,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             [$no, 0, 1, $division, $cid, json_encode($client, JSON_UNESCAPED_UNICODE), $title, 'draft', $date, $valid, json_encode($data, JSON_UNESCAPED_UNICODE), $sub, $disc, $tax, $round, $total, $user['id'], now(), now()]);
+        audit($user, 'quote.create', $no . ' ' . $title);
         json_out(['id' => (int)db()->lastInsertId(), 'quote_no' => $no], 201);
     }
 
@@ -456,6 +477,7 @@ function quotes_route(string $m, ?string $b, ?string $c, array $user): void
         if (!in_array($s, ['draft', 'sent', 'accepted', 'rejected'], true)) fail('Invalid status');
         if ($row['status'] === 'superseded') fail('Superseded revisions cannot change status');
         q('UPDATE quotes SET status=?, updated_at=? WHERE id=?', [$s, now(), $id]);
+        audit($user, 'quote.status', $row['quote_no'] . ' -> ' . $s);
         json_out(['ok' => true]);
     }
 
@@ -469,6 +491,7 @@ function quotes_route(string $m, ?string $b, ?string $c, array $user): void
                 date('Y-m-d', strtotime('+' . (int)(get_setting('validity_days') ?: 15) . ' days')), $row['data'], $row['subtotal'], $row['discount'], $row['tax'], $row['round_off'], $row['total'], $user['id'], now(), now()]);
         $newId = (int)db()->lastInsertId();
         db()->commit();
+        audit($user, 'quote.revise', $row['quote_no'] . ' rev ' . $newRev);
         json_out(['id' => $newId, 'rev' => $newRev], 201);
     }
 
@@ -486,9 +509,65 @@ function quotes_route(string $m, ?string $b, ?string $c, array $user): void
         if ($row['status'] !== 'draft' && !(int)$row['is_latest']) fail('Open the latest revision to delete');
         if ($row['status'] !== 'draft') fail('Only draft quotes can be deleted');
         q('DELETE FROM quotes WHERE quote_no = ?', [$row['quote_no']]);
+        audit($user, 'quote.delete', $row['quote_no']);
         json_out(['ok' => true]);
     }
     fail('Not found', 404);
+}
+
+function audit(array $user, string $action, string $detail = ''): void
+{
+    q('INSERT INTO audit_log (user_name,action,detail,created_at) VALUES (?,?,?,?)', [$user['name'] ?? '', $action, mb_substr($detail, 0, 500), now()]);
+}
+
+function quote_margin(array $data): array
+{
+    $cost = 0.0; $rev = 0.0;
+    foreach (effective_sections($data) as $s) foreach (($s['items'] ?? []) as $it) {
+        $a = num($it['qty'] ?? 0) * num($it['rate'] ?? 0);
+        if ($a > 0 && num($it['cost'] ?? 0) > 0) { $cost += num($it['qty'] ?? 0) * num($it['cost']); $rev += $a; }
+    }
+    $t = compute_totals($data);
+    $disc = $t[0] > 0 ? $t[1] / $t[0] : 0;
+    return [$rev * (1 - $disc), $cost];
+}
+
+function reports(): array
+{
+    $since = date('Y-m-01', strtotime('-11 months'));
+    $monthly = q("SELECT substr(quote_date,1,7) AS month, COUNT(*) AS n, SUM(CASE WHEN status='accepted' THEN 1 ELSE 0 END) AS won, COALESCE(SUM(total),0) AS value, COALESCE(SUM(CASE WHEN status='accepted' THEN total ELSE 0 END),0) AS won_value FROM quotes WHERE is_latest = 1 AND quote_date >= ? GROUP BY substr(quote_date,1,7) ORDER BY month", [$since])->fetchAll();
+    $div = q("SELECT division, COUNT(*) AS n, SUM(CASE WHEN status='accepted' THEN 1 ELSE 0 END) AS won, SUM(CASE WHEN status='rejected' THEN 1 ELSE 0 END) AS lost, COALESCE(SUM(total),0) AS value, COALESCE(SUM(CASE WHEN status='accepted' THEN total ELSE 0 END),0) AS won_value FROM quotes WHERE is_latest = 1 GROUP BY division")->fetchAll();
+    $usr = q("SELECT COALESCE(u.name,'(unknown)') AS name, COUNT(*) AS n, SUM(CASE WHEN q.status='accepted' THEN 1 ELSE 0 END) AS won, COALESCE(SUM(CASE WHEN q.status='accepted' THEN q.total ELSE 0 END),0) AS won_value FROM quotes q LEFT JOIN users u ON u.id = q.created_by WHERE q.is_latest = 1 GROUP BY u.name ORDER BY won_value DESC")->fetchAll();
+    $age = ['0-3 days' => [0, 0.0], '4-7 days' => [0, 0.0], '8-14 days' => [0, 0.0], '15+ days' => [0, 0.0]];
+    foreach (q("SELECT total, updated_at FROM quotes WHERE is_latest = 1 AND status = 'sent'")->fetchAll() as $r) {
+        $d = (int)floor((time() - strtotime($r['updated_at'])) / 86400);
+        $k = $d <= 3 ? '0-3 days' : ($d <= 7 ? '4-7 days' : ($d <= 14 ? '8-14 days' : '15+ days'));
+        $age[$k][0]++; $age[$k][1] += (float)$r['total'];
+    }
+    $src = []; $mar = [];
+    foreach (q('SELECT division, status, total, data FROM quotes WHERE is_latest = 1 ORDER BY id DESC LIMIT 3000')->fetchAll() as $r) {
+        $d = json_decode((string)$r['data'], true) ?: [];
+        $s = ($d['source'] ?? '') ?: '(not set)';
+        $src[$s] ??= ['source' => $s, 'n' => 0, 'won' => 0, 'won_value' => 0.0];
+        $src[$s]['n']++;
+        if ($r['status'] === 'accepted') { $src[$s]['won']++; $src[$s]['won_value'] += (float)$r['total']; }
+        [$rev, $cost] = quote_margin($d);
+        if ($rev > 0) { $mar[$r['division']] ??= ['division' => $r['division'], 'rev' => 0.0, 'cost' => 0.0, 'n' => 0]; $mar[$r['division']]['rev'] += $rev; $mar[$r['division']]['cost'] += $cost; $mar[$r['division']]['n']++; }
+    }
+    $cast = function (array $rows) { foreach ($rows as &$r) foreach ($r as $k => $v) if (is_numeric($v) && $k !== 'month' && $k !== 'division' && $k !== 'name') $r[$k] = $v + 0; return $rows; };
+    return ['monthly' => $cast($monthly), 'by_division' => $cast($div), 'by_user' => $cast($usr), 'sources' => array_values($src), 'margin' => array_values($mar),
+        'aging' => array_map(fn($k, $v) => ['bucket' => $k, 'n' => $v[0], 'value' => round($v[1], 2)], array_keys($age), array_values($age)), 'receivables' => receivables_summary()];
+}
+
+function backup_download(): void
+{
+    $out = ['exported_at' => now(), 'schema_v' => get_setting('schema_v')];
+    foreach (['settings', 'clients', 'rate_items', 'quotes', 'quote_templates', 'quote_shares', 'quote_events', 'projects', 'project_milestones', 'project_receipts', 'project_variations', 'project_log', 'audit_log'] as $t) $out[$t] = q("SELECT * FROM $t")->fetchAll();
+    $out['users'] = q('SELECT id,name,email,role,created_at FROM users')->fetchAll();
+    header('Content-Type: application/json; charset=utf-8');
+    header('Content-Disposition: attachment; filename="infraura-backup-' . date('Y-m-d') . '.json"');
+    echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+    exit;
 }
 
 function log_event(string $quoteNo, int $rev, string $type, array $detail, ?string $actor = null): void

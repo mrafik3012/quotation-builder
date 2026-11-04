@@ -3,7 +3,7 @@ declare(strict_types=1);
 // Lightweight forward-only migrations. Runs automatically (once per version) on the first signed-in request,
 // so already-installed sites upgrade just by uploading the new files.
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 function ensure_schema(): void
 {
@@ -45,6 +45,9 @@ function ensure_schema(): void
         db()->exec("CREATE TABLE IF NOT EXISTS project_log (id $pk, project_id INT NOT NULL, log_date VARCHAR(10) NOT NULL, text TEXT, progress INT NULL, author VARCHAR(120), created_at VARCHAR(19) NOT NULL)$eng");
         db()->exec('CREATE INDEX idx_pm_proj ON project_milestones (project_id)');
         db()->exec('CREATE INDEX idx_pr_proj ON project_receipts (project_id)');
+    }
+    if ($cur < 4) {
+        db()->exec("CREATE TABLE IF NOT EXISTS audit_log (id $pk, user_name VARCHAR(120), action VARCHAR(40) NOT NULL, detail VARCHAR(500), created_at VARCHAR(19) NOT NULL)$eng");
     }
     set_setting('schema_v', (string)SCHEMA_VERSION);
 }
