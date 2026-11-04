@@ -115,6 +115,8 @@ pre.snip{background:#0b0b0b;border:1px solid #2b2619;border-radius:8px;padding:1
 .doc table.q tr{page-break-inside:avoid}.doc table.q thead{display:table-header-group}
 .doc table.q tr.st td{background:#f6ecc4;font-weight:700}.doc table.q tr.ss td{font-weight:700;background:#f8fafc}
 .doc .num{text-align:right;white-space:nowrap}
+.phrow{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}.lth{height:56px;border-radius:6px;border:1px solid var(--line);cursor:zoom-in}
+.doc .en{display:block;font-size:.78em;font-weight:400;opacity:.7;text-transform:none;letter-spacing:0}
 .doc .sum{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:12px;page-break-inside:avoid}
 .doc .sum .w{flex:1;font-style:italic;color:#334155;padding-top:3px}.doc .sum table{width:auto;min-width:270px}.doc .sum td{padding:2px 0}.doc .sum td:last-child{text-align:right;padding-left:20px}
 .doc .sum tr.g td{font-weight:800;font-size:14px;border-top:2px solid #111;padding-top:5px}

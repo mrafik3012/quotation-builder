@@ -147,6 +147,7 @@ function clean_quote_input(array $d, ?string $existingDivision = null): array
         'gst_mode' => in_array($data['gst_mode'] ?? '', ['intra', 'inter'], true) ? $data['gst_mode'] : '',
         'hsn' => str($data['hsn'] ?? '', 20),
         'source' => str($data['source'] ?? '', 40),
+        'lang' => in_array($data['lang'] ?? '', ['hi', 'ta', 'te', 'kn', 'ml'], true) ? $data['lang'] : '',
     ];
     $lines = 0;
     foreach (effective_sections($clean) as $s) $lines += count($s['items']);
@@ -261,6 +262,7 @@ function dashboard(): array
         'recent' => array_map(fn($r) => quote_row_out($r + ['subtotal' => 0, 'discount' => 0, 'tax' => 0, 'round_off' => 0], false), $recent),
         'clients' => (int)q('SELECT COUNT(*) AS n FROM clients')->fetch()['n'],
         'receivables' => receivables_summary(),
+        'amc_due' => q("SELECT p.id, p.name, p.amc_end, p.amc_note, c.name AS client_name, c.phone AS client_phone FROM projects p LEFT JOIN clients c ON c.id = p.client_id WHERE p.amc_end IS NOT NULL AND p.amc_end <> '' AND p.amc_end >= ? AND p.amc_end <= ? ORDER BY p.amc_end LIMIT 20", [date('Y-m-d', strtotime('-14 days')), date('Y-m-d', strtotime('+60 days'))])->fetchAll(),
         'follow_up' => array_map(fn($r) => quote_row_out($r + ['subtotal' => 0, 'discount' => 0, 'tax' => 0, 'round_off' => 0], false),
             q("SELECT q.id,q.quote_no,q.rev,q.division,q.client_json,q.title,q.status,q.quote_date,q.valid_until,q.total,q.updated_at,
                 (SELECT COUNT(*) FROM quote_events e WHERE e.quote_no = q.quote_no AND e.type = 'view') AS views

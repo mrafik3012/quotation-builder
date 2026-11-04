@@ -186,7 +186,7 @@ async function route() {
   if (!S.user) return;
   lastHash = location.hash;
   const p = (location.hash.replace(/^#\/?/, '') || 'dashboard').split('/');
-  document.body.classList.toggle('printmode', (p[0] === 'quotes' && p[2] === 'print') || (p[0] === 'projects' && p[2] === 'invoice'));
+  document.body.classList.toggle('printmode', (p[0] === 'quotes' && p[2] === 'print') || (p[0] === 'projects' && ['invoice', 'receipt', 'credit'].includes(p[2])));
   if (!$('#view')) layout();
   $$('.side nav a').forEach(a => a.classList.toggle('on', a.dataset.n === p[0]));
   const v = $('#view'); v.onclick = v.oninput = v.onchange = null;
@@ -201,6 +201,8 @@ async function route() {
     } else if (p[0] === 'projects') {
       if (!p[1]) await pageProjects();
       else if (p[2] === 'invoice') await pageInvoice(+p[1], +p[3]);
+      else if (p[2] === 'receipt') await pageReceipt(+p[1], +p[3]);
+      else if (p[2] === 'credit') await pageCredit(+p[1], +p[3]);
       else await pageProject(+p[1]);
     } else if (p[0] === 'reports') await pageReports();
     else if (p[0] === 'clients') await pageClients();
@@ -241,6 +243,7 @@ async function pageDashboard() {
   }).join('')}</div>
   <div class="grid2"><div class="card"><h3>Quote value — last 6 months</h3>${d.monthly.length ? `<div class="bars">${d.monthly.map(m => `<div class="b" title="${m.n} quotes"><span>${inr0(m.value).replace('₹ ', '')}</span><i style="height:${Math.max(3, Math.round(m.value * 90 / maxM))}%"></i><span>${esc(monthLabel(m.month))}</span></div>`).join('')}</div>` : '<p class="muted">No quotes yet.</p>'}</div>
   <div class="card"><h3>By status</h3>${['draft', 'sent', 'accepted', 'rejected'].map(k => `<div class="row" style="margin-bottom:6px">${statusChip(k)}<span class="sp"></span><span class="muted small">${g(k).n} quotes</span><b>${inr0(g(k).value)}</b></div>`).join('')}</div></div>
+  ${d.amc_due && d.amc_due.length ? `<div class="card"><h3>AMC / warranty renewals due</h3>${d.amc_due.map(a => { const days = Math.round((new Date(a.amc_end + 'T00:00:00') - new Date(today() + 'T00:00:00')) / 864e5); return `<div class="row" style="margin-bottom:8px"><div style="flex:1;min-width:200px"><a href="#/projects/${a.id}"><b>${esc(a.name)}</b></a> · ${esc(a.client_name || '')}<div class="muted small">${days >= 0 ? 'ends in ' + days + ' day(s)' : '<span class="bad">ended ' + (-days) + ' day(s) ago</span>'} (${esc(fdate(a.amc_end))})${a.amc_note ? ' · ' + esc(a.amc_note) : ''}</div></div><a class="btn sm" target="_blank" rel="noopener" href="${waLink(a.client_phone, `Hello ${a.client_name || ''}, the AMC / warranty for ${a.name} ${days >= 0 ? 'ends on ' + fdate(a.amc_end) : 'ended on ' + fdate(a.amc_end)}. Shall we renew or schedule a maintenance visit? - ${S.settings.company_name}`)}">WhatsApp renewal</a></div>`; }).join('')}</div>` : ''}
   ${d.follow_up && d.follow_up.length ? `<div class="card"><h3>Follow-ups due — sent 3+ days ago, no reply</h3>${d.follow_up.map(f => { const c = f.client || {}, days = Math.max(3, Math.floor((Date.now() - new Date(f.updated_at.replace(' ', 'T'))) / 864e5)); return `<div class="row" style="margin-bottom:8px"><div style="flex:1;min-width:200px"><a href="#/quotes/${f.id}"><b>${esc(f.quote_no)}</b></a> · ${esc(c.name || '')}<div class="muted small">${days} days ago · ${f.views ? 'viewed ' + f.views + '×' : 'not opened yet'}</div></div><b>${inr0(f.total)}</b><a class="btn sm" target="_blank" rel="noopener" href="${waLink(c.phone, `Hello ${c.contact_person || c.name || ''}, a gentle reminder about our quotation ${f.quote_no} (${inr0(f.total)}). Happy to clarify anything or revise it - ${S.settings.company_name}`)}">WhatsApp reminder</a></div>`; }).join('')}</div>` : ''}
   <div class="card"><h3>Recent quotes</h3>${quoteTable(d.recent)}</div>`;
 }

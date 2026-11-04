@@ -22,7 +22,7 @@ function normalizeQuote() {
   d.tax_rate = d.tax_rate ?? 18;
   d.payment_schedule = Array.isArray(d.payment_schedule) ? d.payment_schedule : [];
   d.terms = Array.isArray(d.terms) ? d.terms : [];
-  d.source = d.source || ''; d.gst_mode = d.gst_mode || ''; d.hsn = d.hsn || ''; d.notes = d.notes || ''; d.scope = d.scope || ''; d.site_address = d.site_address || ''; d.area_sqft = d.area_sqft || '';
+  d.source = d.source || ''; d.lang = d.lang || ''; d.gst_mode = d.gst_mode || ''; d.hsn = d.hsn || ''; d.notes = d.notes || ''; d.scope = d.scope || ''; d.site_address = d.site_address || ''; d.area_sqft = d.area_sqft || '';
   d.options = Array.isArray(d.options) ? d.options.map(o => ({ name: o.name || '', note: o.note || '', sections: Array.isArray(o.sections) ? o.sections : [] })) : [];
   d.selected_option = d.options.length ? Math.min(Math.max(+d.selected_option || 0, 0), d.options.length - 1) : 0;
   d.pmc = d.pmc && typeof d.pmc === 'object' ? d.pmc : { mode: 'percent', base_cost: '', percent: 4, area: '', per_sqft: 60, months: '', monthly_fee: 85000 };
@@ -115,6 +115,7 @@ function drawEditor() {
     <div class="grid3"><label class="f"><span>Built-up / project area (sq ft)</span><input type="number" step="any" min="0" data-b="data.area_sqft" value="${esc(Q.data.area_sqft)}"></label>
     <label class="f"><span>Quote date</span><input type="date" data-b="quote_date" value="${esc(Q.quote_date)}"></label>
     <label class="f"><span>Valid until</span><input type="date" data-b="valid_until" value="${esc(Q.valid_until)}"></label></div>
+    <label class="f"><span>Document language (labels on the printed quote)</span><select data-b="data.lang">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${Q.data.lang === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
     <label class="f"><span>Lead source (internal, for reports)</span><select data-b="data.source"><option value="">—</option>${['Referral', 'Walk-in', 'Website', 'WhatsApp', 'Instagram', 'Facebook', 'Google', 'Repeat client', 'Tender', 'Other'].map(x => `<option ${Q.data.source === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
     <label class="f"><span>Scope of work (printed above the items)</span><textarea data-b="data.scope" rows="3">${esc(Q.data.scope)}</textarea></label></div>
   </div>
@@ -463,7 +464,7 @@ function gstRowsHtml(d, t, mode) {
   return `<tr><td>GST @ ${rt}%</td><td>${fmt(t.tax)}</td></tr>`;
 }
 function quoteDocHtml(s) {
-  const d = Q.data, t = totals(d), c = Q.client, gm = gstMode(d, s, c);
+  const d = Q.data, t = totals(d), c = Q.client, gm = gstMode(d, s, c), lang = d.lang || '';
   let body = '';
   d.sections.forEach((sec, si) => {
     if (!sec.items.length) return;
@@ -475,35 +476,35 @@ function quoteDocHtml(s) {
       const a = r2(n(it.qty) * n(it.rate)); st += a;
       body += `<tr><td>${si + 1}.${ii + 1}</td><td>${esc(it.desc).replace(/\n/g, '<br>')}</td><td>${esc(it.unit)}</td><td class="num">${esc(n(it.qty))}</td><td class="num">${fmt(n(it.rate))}</td><td class="num">${fmt(a)}</td></tr>`;
     });
-    if (multi) body += `<tr class="ss"><td colspan="5" class="num">Sub-total — ${esc(sec.title)}</td><td class="num">${fmt(st)}</td></tr>`;
+    if (multi) body += `<tr class="ss"><td colspan="5" class="num">${L('Sub-total', lang)} — ${esc(sec.title)}</td><td class="num">${fmt(st)}</td></tr>`;
   });
   let optHtml = '';
   if (d.options.length) {
-    const L = i => String.fromCharCode(65 + i);
+    const OL = i => String.fromCharCode(65 + i);
     d.options.forEach((op, oi) => {
       const secs = op.sections.filter(x => x.items.length); if (!secs.length) return;
-      body += `<tr class="st"><td colspan="6">Option ${L(oi)} — ${esc(op.name)}${d.selected_option === oi ? ' (selected)' : ''}${op.note ? ' · <span style="font-weight:400">' + esc(op.note) + '</span>' : ''}</td></tr>`;
+      body += `<tr class="st"><td colspan="6">${L('Option', lang)} ${OL(oi)} — ${esc(op.name)}${d.selected_option === oi ? ' (selected)' : ''}${op.note ? ' · <span style="font-weight:400">' + esc(op.note) + '</span>' : ''}</td></tr>`;
       let ot = 0;
-      secs.forEach(sec => sec.items.forEach((it, ii) => { const a = r2(n(it.qty) * n(it.rate)); ot += a; body += `<tr><td>${L(oi)}.${ii + 1}</td><td>${esc(it.desc).replace(/\n/g, '<br>')}</td><td>${esc(it.unit)}</td><td class="num">${esc(n(it.qty))}</td><td class="num">${fmt(n(it.rate))}</td><td class="num">${fmt(a)}</td></tr>`; }));
-      body += `<tr class="ss"><td colspan="5" class="num">Sub-total — Option ${L(oi)}</td><td class="num">${fmt(ot)}</td></tr>`;
+      secs.forEach(sec => sec.items.forEach((it, ii) => { const a = r2(n(it.qty) * n(it.rate)); ot += a; body += `<tr><td>${OL(oi)}.${ii + 1}</td><td>${esc(it.desc).replace(/\n/g, '<br>')}</td><td>${esc(it.unit)}</td><td class="num">${esc(n(it.qty))}</td><td class="num">${fmt(n(it.rate))}</td><td class="num">${fmt(a)}</td></tr>`; }));
+      body += `<tr class="ss"><td colspan="5" class="num">${L('Sub-total', lang)} — ${L('Option', lang)} ${OL(oi)}</td><td class="num">${fmt(ot)}</td></tr>`;
     });
-    optHtml = `<h4>Choose your option</h4><table class="q"><thead><tr><th>Option</th><th>Highlights</th><th class="num">Package (₹)</th><th class="num">Quote total incl. GST (₹)</th></tr></thead><tbody>${d.options.map((op, oi) => `<tr${d.selected_option === oi ? ' class="st"' : ''}><td>${L(oi)} — ${esc(op.name)}${d.selected_option === oi ? ' ✓' : ''}</td><td>${esc(op.note)}</td><td class="num">${fmt(secSum(op.sections))}</td><td class="num">${fmt(optionTotals(d, oi).total)}</td></tr>`).join('')}</tbody></table>`;
+    optHtml = `<h4>${L('Choose your option', lang)}</h4><table class="q"><thead><tr><th>${L('Option', lang)}</th><th>${L('Highlights', lang)}</th><th class="num">${L('Package (₹)', lang)}</th><th class="num">${L('Quote total incl. GST (₹)', lang)}</th></tr></thead><tbody>${d.options.map((op, oi) => `<tr${d.selected_option === oi ? ' class="st"' : ''}><td>${OL(oi)} — ${esc(op.name)}${d.selected_option === oi ? ' ✓' : ''}</td><td>${esc(op.note)}</td><td class="num">${fmt(secSum(op.sections))}</td><td class="num">${fmt(optionTotals(d, oi).total)}</td></tr>`).join('')}</tbody></table>`;
   }
-  const pay = d.payment_schedule.length ? `<h4>Payment schedule</h4><table class="q"><thead><tr><th>Stage</th><th class="num">%</th><th class="num">Amount (₹)</th></tr></thead><tbody>${d.payment_schedule.map(p => `<tr><td>${esc(p.label)}</td><td class="num">${esc(n(p.percent))}%</td><td class="num">${fmt(r2(t.total * n(p.percent) / 100))}</td></tr>`).join('')}</tbody></table>` : '';
+  const pay = d.payment_schedule.length ? `<h4>${L('Payment schedule', lang)}</h4><table class="q"><thead><tr><th>${L('Stage', lang)}</th><th class="num">%</th><th class="num">${L('Amount (₹)', lang)}</th></tr></thead><tbody>${d.payment_schedule.map(p => `<tr><td>${esc(p.label)}</td><td class="num">${esc(n(p.percent))}%</td><td class="num">${fmt(r2(t.total * n(p.percent) / 100))}</td></tr>`).join('')}</tbody></table>` : '';
   return `<div class="doc">
    <div class="hd"><div class="co"><img src="${s.company_logo ? esc(s.company_logo) : 'assets/logo.png'}" alt=""><div><h2>${esc(s.company_name)}</h2><div>${esc(s.company_tagline)}</div><div>${esc(s.company_address)}</div><div>${[s.company_phone && 'Phone: ' + s.company_phone, s.company_email && 'Email: ' + s.company_email, s.company_gstin && 'GSTIN: ' + s.company_gstin].filter(Boolean).map(esc).join(' · ')}</div></div></div>
-   <div class="qt"><h1>QUOTATION</h1><table><tr><td>Quote no.</td><td><b>${esc(Q.quote_no)}</b></td></tr>${Q.rev ? `<tr><td>Revision</td><td>${Q.rev}</td></tr>` : ''}<tr><td>Date</td><td>${fdate(Q.quote_date)}</td></tr><tr><td>Valid until</td><td>${fdate(Q.valid_until)}</td></tr><tr><td>Division</td><td>${esc(DIVS[Q.division])}</td></tr></table></div></div>
-   <div class="two"><div class="box"><h5>Quotation for</h5><div><b>${esc(c.name)}</b>${c.contact_person ? '\nAttn: ' + esc(c.contact_person) : ''}${c.address ? '\n' + esc(c.address) : ''}${c.phone ? '\nPhone: ' + esc(c.phone) : ''}${c.email ? '\nEmail: ' + esc(c.email) : ''}${c.gstin ? '\nGSTIN: ' + esc(c.gstin) : ''}</div></div>
-   <div class="box"><h5>Project</h5><div><b>${esc(Q.title || '—')}</b>${d.site_address ? '\nSite: ' + esc(d.site_address) : ''}${n(d.area_sqft) ? '\nArea: ' + esc(n(d.area_sqft)) + ' sq ft' : ''}</div></div></div>
-   ${d.scope ? `<h4>Scope of work</h4><pre>${esc(d.scope)}</pre>` : ''}
-   <table class="q" style="margin-top:10px"><thead><tr><th style="width:36px">#</th><th>Description</th><th style="width:48px">Unit</th><th class="num" style="width:56px">Qty</th><th class="num" style="width:84px">Rate (₹)</th><th class="num" style="width:100px">Amount (₹)</th></tr></thead><tbody>${body || '<tr><td colspan="6">No items</td></tr>'}</tbody></table>
-   <div class="sum"><div class="w">${esc(amountWords(t.total))}</div><table><tr><td>Subtotal</td><td>${fmt(t.sub)}</td></tr>${t.disc ? `<tr><td>Discount${d.discount.type === 'percent' ? ' (' + n(d.discount.value) + '%)' : ''}</td><td>− ${fmt(t.disc)}</td></tr><tr><td>Taxable amount</td><td>${fmt(t.taxable)}</td></tr>` : ''}${gstRowsHtml(d, t, gm)}${d.round_off && t.ro ? `<tr><td>Round off</td><td>${t.ro < 0 ? '− ' : ''}${fmt(Math.abs(t.ro))}</td></tr>` : ''}<tr class="g"><td>Grand total (₹)${d.options.length ? '<br><span style="font-weight:400;font-size:10px">Option ' + String.fromCharCode(65 + d.selected_option) + ' — ' + esc(d.options[d.selected_option].name) + '</span>' : ''}</td><td>${fmt(t.total)}</td></tr></table></div>
+   <div class="qt"><h1>${L('QUOTATION', lang)}</h1><table><tr><td>${L('Quote no.', lang)}</td><td><b>${esc(Q.quote_no)}</b></td></tr>${Q.rev ? `<tr><td>${L('Revision', lang)}</td><td>${Q.rev}</td></tr>` : ''}<tr><td>${L('Date', lang)}</td><td>${fdate(Q.quote_date)}</td></tr><tr><td>${L('Valid until', lang)}</td><td>${fdate(Q.valid_until)}</td></tr><tr><td>${L('Division', lang)}</td><td>${esc(DIVS[Q.division])}</td></tr></table></div></div>
+   <div class="two"><div class="box"><h5>${L('Quotation for', lang)}</h5><div><b>${esc(c.name)}</b>${c.contact_person ? '\nAttn: ' + esc(c.contact_person) : ''}${c.address ? '\n' + esc(c.address) : ''}${c.phone ? '\nPhone: ' + esc(c.phone) : ''}${c.email ? '\nEmail: ' + esc(c.email) : ''}${c.gstin ? '\nGSTIN: ' + esc(c.gstin) : ''}</div></div>
+   <div class="box"><h5>${L('Project', lang)}</h5><div><b>${esc(Q.title || '—')}</b>${d.site_address ? '\nSite: ' + esc(d.site_address) : ''}${n(d.area_sqft) ? '\nArea: ' + esc(n(d.area_sqft)) + ' sq ft' : ''}</div></div></div>
+   ${d.scope ? `<h4>${L('Scope of work', lang)}</h4><pre>${esc(d.scope)}</pre>` : ''}
+   <table class="q" style="margin-top:10px"><thead><tr><th style="width:36px">#</th><th>${L('Description', lang)}</th><th style="width:48px">${L('Unit', lang)}</th><th class="num" style="width:56px">${L('Qty', lang)}</th><th class="num" style="width:84px">${L('Rate (₹)', lang)}</th><th class="num" style="width:100px">${L('Amount (₹)', lang)}</th></tr></thead><tbody>${body || '<tr><td colspan="6">No items</td></tr>'}</tbody></table>
+   <div class="sum"><div class="w">${esc(amountWords(t.total))}</div><table><tr><td>${L('Subtotal', lang)}</td><td>${fmt(t.sub)}</td></tr>${t.disc ? `<tr><td>${L('Discount', lang)}${d.discount.type === 'percent' ? ' (' + n(d.discount.value) + '%)' : ''}</td><td>− ${fmt(t.disc)}</td></tr><tr><td>${L('Taxable amount', lang)}</td><td>${fmt(t.taxable)}</td></tr>` : ''}${gstRowsHtml(d, t, gm)}${d.round_off && t.ro ? `<tr><td>${L('Round off', lang)}</td><td>${t.ro < 0 ? '− ' : ''}${fmt(Math.abs(t.ro))}</td></tr>` : ''}<tr class="g"><td>${L('Grand total (₹)', lang)}${d.options.length ? '<br><span style="font-weight:400;font-size:10px">Option ' + String.fromCharCode(65 + d.selected_option) + ' — ' + esc(d.options[d.selected_option].name) + '</span>' : ''}</td><td>${fmt(t.total)}</td></tr></table></div>
    ${optHtml}
    ${pay}
-   ${d.terms.length ? `<h4>Terms &amp; conditions</h4><ol>${d.terms.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
-   ${d.notes ? `<h4>Notes</h4><pre>${esc(d.notes)}</pre>` : ''}
-   ${s.bank_details && s.bank_details.replace(/[\s\w ]*:\s*/g, '').trim() ? `<h4>Bank details</h4><pre>${esc(s.bank_details)}</pre>` : ''}
-   <div class="sig"><div>Client acceptance &amp; date</div><div>For ${esc(s.company_name)}${s.signatory ? '<br><b>' + esc(s.signatory) + '</b>' : ''}<br>Authorised signatory</div></div>
+   ${d.terms.length ? `<h4>${L('Terms & conditions', lang)}</h4><ol>${d.terms.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
+   ${d.notes ? `<h4>${L('Notes', lang)}</h4><pre>${esc(d.notes)}</pre>` : ''}
+   ${s.bank_details && s.bank_details.replace(/[\s\w ]*:\s*/g, '').trim() ? `<h4>${L('Bank details', lang)}</h4><pre>${esc(s.bank_details)}</pre>` : ''}
+   <div class="sig"><div>${L('Client acceptance & date', lang)}</div><div>${L('For', lang)} ${esc(s.company_name)}${s.signatory ? '<br><b>' + esc(s.signatory) + '</b>' : ''}<br>${L('Authorised signatory', lang)}</div></div>
    <div class="foot">${d.hsn ? 'HSN / SAC: ' + esc(d.hsn) + ' · ' : ''}${gm === 'intra' ? 'Intra-state supply (CGST + SGST)' : gm === 'inter' ? 'Inter-state supply (IGST)' : ''}${d.hsn || gm ? '<br>' : ''}This is a computer-generated quotation · ${esc(Q.quote_no)}</div></div>`;
 }
 
