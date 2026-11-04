@@ -74,54 +74,60 @@ function pmcFee() {
 /* ---------- rendering ---------- */
 function drawEditor() {
   const ro = Q.status === 'superseded', isNew = !Q.id, v = $('#view');
+  const total = totals(Q.data).total;
   v.innerHTML = `
   <datalist id="units">${UNITS.map(u => `<option value="${u}">`).join('')}</datalist>
-  <div class="page-head noprint"><h1>${isNew ? 'New ' + esc(DIVS[Q.division]) + ' quote' : esc(Q.quote_no) + (Q.rev ? ` <span class="muted">· Rev ${Q.rev}</span>` : '')}</h1>
-   ${divChip(Q.division)} ${isNew ? '' : statusChip(Q.status)}</div>
-  <div class="row noprint" style="margin-bottom:14px">
-   ${ro ? '' : '<button class="btn pri" data-act="save">Save</button>'}
-   ${isNew ? '' : `<a class="btn" href="#/quotes/${Q.id}/print">Preview / PDF</a>`}
-   ${isNew || ro ? '' : `<select id="stsel" style="width:auto"><option disabled>Status…</option>${['draft', 'sent', 'accepted', 'rejected'].map(k => `<option value="${k}" ${Q.status === k ? 'selected' : ''}>${STATUS_LABEL[k]}</option>`).join('')}</select>`}
-   <span class="sp"></span>
-   ${isNew || ro ? '' : '<button class="btn" data-act="revise">New revision</button>'}
-   ${isNew ? '' : '<button class="btn" data-act="dup">Duplicate</button>'}
-   ${isNew || Q.status !== 'draft' ? '' : '<button class="btn dng" data-act="del">Delete</button>'}
-  </div>
-  ${ro ? `<div class="banner">This is Rev ${Q.rev}, which has been superseded and is read-only. <a href="#" data-act="latest">Open the latest revision</a>.</div>` : ''}
+  <div class="ed-bar noprint">
+   <a class="btn ghost ico" href="#/quotes" aria-label="Back to quotes" title="Back to quotes">${ic('back')}</a>
+   <div style="min-width:0"><div class="crumb">Quotes / ${isNew ? 'New' : esc(DIVS[Q.division])}</div>
+   <h1>${isNew ? 'New ' + esc(DIVS[Q.division]) + ' quotation' : esc(Q.quote_no) + (Q.rev ? ` <span class="muted" style="font-weight:500">· Rev ${Q.rev}</span>` : '')} ${divChip(Q.division)} ${isNew ? '<span class="chip draft">Unsaved</span>' : statusChip(Q.status)}</h1></div>
+   <span class="sp"></span><div class="ed-act">
+   ${isNew || ro ? '' : `<select id="stsel" style="width:auto" aria-label="Status"><option disabled>Status…</option>${['draft', 'sent', 'accepted', 'rejected'].map(k => `<option value="${k}" ${Q.status === k ? 'selected' : ''}>${STATUS_LABEL[k]}</option>`).join('')}</select>`}
+   ${isNew || ro ? '' : `<button class="btn" data-act="revise">${ic('revise', 'sm')} Revise</button>`}
+   ${isNew ? '' : `<button class="btn" data-act="dup">${ic('copy', 'sm')} Duplicate</button>`}
+   ${isNew || Q.status !== 'draft' ? '' : `<button class="btn dng" data-act="del" aria-label="Delete">${ic('trash', 'sm')}</button>`}
+   ${isNew ? '' : `<a class="btn" href="#/quotes/${Q.id}/print">${ic('eye', 'sm')} Preview / PDF</a>`}
+   ${ro ? '' : `<button class="btn gold" data-act="save">${ic('save', 'sm')} Save</button>`}
+  </div></div>
+  ${ro ? `<div class="banner">${ic('info')}<span>This is Rev ${Q.rev}, which has been superseded and is read-only. <a href="#" data-act="latest"><b>Open the latest revision</b></a>.</span></div>` : ''}
   <fieldset ${ro ? 'disabled' : ''}>
-  <div class="grid2">
-   <div class="card"><h3>Client</h3>
-    <label class="f"><span>Saved client</span><select id="clientsel"><option value="">— Type new client below —</option>${S.clients.map(c => `<option value="${c.id}" ${Q.client_id == c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
-    <label class="f"><span>Client name *</span><input data-b="client.name" value="${esc(Q.client.name)}"></label>
-    <div class="grid2"><label class="f"><span>Contact person</span><input data-b="client.contact_person" value="${esc(Q.client.contact_person)}"></label><label class="f"><span>Phone</span><input data-b="client.phone" value="${esc(Q.client.phone)}"></label>
-    <label class="f"><span>Email</span><input data-b="client.email" value="${esc(Q.client.email)}"></label><label class="f"><span>GSTIN</span><input data-b="client.gstin" value="${esc(Q.client.gstin)}"></label></div>
-    <label class="f"><span>Billing address</span><textarea data-b="client.address" rows="2">${esc(Q.client.address)}</textarea></label>
-    <p class="muted small" style="margin:0">New client names are saved to your client list automatically. Editing here changes this quote only.</p></div>
-   <div class="card"><h3>Project</h3>
-    <label class="f"><span>Quotation title / project name</span><input data-b="title" value="${esc(Q.title)}" placeholder="e.g. Warehouse roofing — Phase 1"></label>
-    <label class="f"><span>Site address</span><textarea data-b="data.site_address" rows="2">${esc(Q.data.site_address)}</textarea></label>
-    <div class="grid3"><label class="f"><span>Built-up / project area (sq ft)</span><input type="number" step="any" min="0" data-b="data.area_sqft" value="${esc(Q.data.area_sqft)}"></label>
-    <label class="f"><span>Quote date</span><input type="date" data-b="quote_date" value="${esc(Q.quote_date)}"></label>
-    <label class="f"><span>Valid until</span><input type="date" data-b="valid_until" value="${esc(Q.valid_until)}"></label></div>
-    <label class="f"><span>Scope of work (printed above the items)</span><textarea data-b="data.scope" rows="3">${esc(Q.data.scope)}</textarea></label></div>
+  <div class="ed-layout">
+  <div class="ed-main">
+   <div class="grid2">
+    <div class="card"><h3><span class="no">1</span>Client</h3>
+     <label class="f"><span>Saved client</span><select id="clientsel"><option value="">— Type new client below —</option>${S.clients.map(c => `<option value="${c.id}" ${Q.client_id == c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+     <label class="f"><span>Client name *</span><input data-b="client.name" value="${esc(Q.client.name)}" placeholder="Company or individual"></label>
+     <div class="grid2"><label class="f"><span>Contact person</span><input data-b="client.contact_person" value="${esc(Q.client.contact_person)}"></label><label class="f"><span>Phone</span><input data-b="client.phone" value="${esc(Q.client.phone)}"></label>
+     <label class="f"><span>Email</span><input data-b="client.email" value="${esc(Q.client.email)}"></label><label class="f"><span>GSTIN</span><input data-b="client.gstin" value="${esc(Q.client.gstin)}"></label></div>
+     <label class="f"><span>Billing address</span><textarea data-b="client.address" rows="2">${esc(Q.client.address)}</textarea></label>
+     <p class="hint">${ic('info', 'sm')} New clients are saved to your client list automatically. Edits here change this quote only.</p></div>
+    <div class="card"><h3><span class="no">2</span>Project</h3>
+     <label class="f"><span>Quotation title / project name</span><input data-b="title" value="${esc(Q.title)}" placeholder="e.g. Warehouse roofing — Phase 1"></label>
+     <label class="f"><span>Site address</span><textarea data-b="data.site_address" rows="2">${esc(Q.data.site_address)}</textarea></label>
+     <div class="grid3 proj3"><label class="f"><span>Area (sq ft)</span><input type="number" step="any" min="0" data-b="data.area_sqft" value="${esc(Q.data.area_sqft)}"></label>
+     <label class="f"><span>Quote date</span><input type="date" data-b="quote_date" value="${esc(Q.quote_date)}"></label>
+     <label class="f"><span>Valid until</span><input type="date" data-b="valid_until" value="${esc(Q.valid_until)}"></label></div>
+     <label class="f"><span>Scope of work (printed above the items)</span><textarea data-b="data.scope" rows="3">${esc(Q.data.scope)}</textarea></label></div>
+   </div>
+   <div id="pmcbox"></div>
+   <div id="sections"></div>
+   <div class="row" style="margin-bottom:18px"><button class="btn" data-act="addsec">${ic('plus', 'sm')} Add section</button></div>
+   <div class="grid2"><div class="card"><h3>Terms &amp; conditions <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">· one per line</span></h3><textarea data-b="terms_text" rows="9">${esc(Q.data.terms.join('\n'))}</textarea></div>
+   <div class="card"><h3>Notes <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">· printed at the end</span></h3><textarea data-b="data.notes" rows="9">${esc(Q.data.notes)}</textarea></div></div>
+   ${Q.revisions && Q.revisions.length > 1 ? `<div class="card noprint"><h3>${ic('revise', 'sm')} Revision history</h3>${Q.revisions.map(r => `<div class="row" style="padding:7px 0;border-bottom:1px solid var(--line2)"><a href="#/quotes/${r.id}"><b>Rev ${r.rev}</b></a>${statusChip(r.status)}<span class="muted small">${esc(r.updated_at)}</span><span class="sp"></span><b class="tnum">${inr0(r.total)}</b></div>`).join('')}</div>` : ''}
   </div>
-  <div id="pmcbox"></div>
-  <div id="sections"></div>
-  <div class="row" style="margin-bottom:16px"><button class="btn" data-act="addsec">+ Add section</button><span class="muted small" id="rsq"></span></div>
-  <div class="grid2">
-   <div class="card"><h3>Summary</h3>
-    <div class="grid3"><label class="f"><span>Discount type</span><select data-b="data.discount.type"><option value="percent" ${Q.data.discount.type !== 'flat' ? 'selected' : ''}>Percent %</option><option value="flat" ${Q.data.discount.type === 'flat' ? 'selected' : ''}>Flat ₹</option></select></label>
-    <label class="f"><span>Discount</span><input type="number" step="any" min="0" data-b="data.discount.value" value="${esc(Q.data.discount.value)}"></label>
+  <aside class="ed-side">
+   <div class="card sumcard"><h3>Quote summary</h3>
+    <div class="grid3" style="grid-template-columns:1.2fr 1fr 1fr;gap:10px"><label class="f"><span>Discount</span><select data-b="data.discount.type"><option value="percent" ${Q.data.discount.type !== 'flat' ? 'selected' : ''}>Percent %</option><option value="flat" ${Q.data.discount.type === 'flat' ? 'selected' : ''}>Flat ₹</option></select></label>
+    <label class="f"><span>Value</span><input type="number" step="any" min="0" data-b="data.discount.value" value="${esc(Q.data.discount.value)}"></label>
     <label class="f"><span>GST %</span><input type="number" step="any" min="0" data-b="data.tax_rate" value="${esc(Q.data.tax_rate)}"></label></div>
-    <label class="row small" style="gap:6px;margin-bottom:10px"><input type="checkbox" data-b="data.round_off" ${Q.data.round_off ? 'checked' : ''}> Round off grand total to nearest rupee</label>
-    <table class="totals"><tr><td>Subtotal</td><td id="t-sub"></td></tr><tr><td>Discount</td><td id="t-disc"></td></tr><tr><td>Taxable amount</td><td id="t-taxable"></td></tr><tr><td id="t-gstl">GST</td><td id="t-tax"></td></tr><tr id="t-rorow"><td>Round off</td><td id="t-ro"></td></tr><tr class="g"><td>Grand total</td><td id="t-total"></td></tr></table>
-    <p class="muted small" id="t-words" style="margin:8px 0 0"></p></div>
+    <label class="sw" style="margin-bottom:12px"><input type="checkbox" data-b="data.round_off" ${Q.data.round_off ? 'checked' : ''}> Round off to nearest rupee</label>
+    <table class="totals"><tr><td>Subtotal</td><td id="t-sub"></td></tr><tr><td>Discount</td><td id="t-disc"></td></tr><tr><td>Taxable amount</td><td id="t-taxable"></td></tr><tr><td id="t-gstl">GST</td><td id="t-tax"></td></tr><tr id="t-rorow"><td>Round off</td><td id="t-ro"></td></tr><tr class="g"><td>Grand total</td><td id="t-total">${inr(total)}</td></tr></table>
+    <p class="words" id="t-words"></p><div class="psf" id="rsq"></div></div>
    <div class="card"><h3>Payment schedule</h3><div id="paybox"></div></div>
+  </aside>
   </div>
-  <div class="grid2"><div class="card"><h3>Terms &amp; conditions (one per line)</h3><textarea data-b="terms_text" rows="9">${esc(Q.data.terms.join('\n'))}</textarea></div>
-  <div class="card"><h3>Notes (printed at the end)</h3><textarea data-b="data.notes" rows="9">${esc(Q.data.notes)}</textarea></div></div>
-  </fieldset>
-  ${Q.revisions && Q.revisions.length > 1 ? `<div class="card noprint"><h3>Revision history</h3>${Q.revisions.map(r => `<div class="row" style="margin-bottom:4px"><a href="#/quotes/${r.id}">Rev ${r.rev}</a>${statusChip(r.status)}<span class="muted small">${esc(r.updated_at)}</span><span class="sp"></span><b>${inr0(r.total)}</b></div>`).join('')}</div>` : ''}`;
+  </fieldset>`;
   drawPmc(); drawSections(); drawPay(); recalc();
   wireEditor();
 }
@@ -132,42 +138,43 @@ function drawPmc() {
   const p = Q.data.pmc;
   const mode = (k, l) => `<label class="${p.mode === k ? 'on' : ''}"><input type="radio" name="pmcmode" value="${k}" data-b="data.pmc.mode" ${p.mode === k ? 'checked' : ''}>${l}</label>`;
   const f = (k, l, step = 'any') => `<label class="f"><span>${l}</span><input type="number" step="${step}" min="0" data-b="data.pmc.${k}" data-pmc="1" value="${esc(p[k])}"></label>`;
-  box.innerHTML = `<div class="card"><h3>PMC fee calculator</h3>
+  box.innerHTML = `<div class="card"><h3>${ic('calc', 'sm')} PMC fee calculator</h3>
   <div class="pmc-modes">${mode('percent', '% of project cost')}${mode('sqft', 'Per sq ft of area')}${mode('monthly', 'Monthly retainer')}</div>
   <div class="grid3">${p.mode === 'percent' ? f('base_cost', 'Estimated project cost (₹)') + f('percent', 'PMC fee (%)') : ''}
    ${p.mode === 'sqft' ? f('area', 'Built-up area (sq ft)') + f('per_sqft', 'Fee per sq ft (₹)') : ''}
    ${p.mode === 'monthly' ? f('months', 'Duration (months)') + f('monthly_fee', 'Monthly fee (₹)') : ''}
-   <div class="feebox" style="align-self:end">Fee: <span id="pmcfee"></span></div></div>
-  <div class="row" style="margin-top:12px"><button class="btn pri" data-act="pmcapply">Add fee to quote</button><button class="btn" data-act="pmcpay">Use PMC payment stages</button>
-  <span class="muted small">Adds a line under “${PMC_SEC}”. Add resources (site engineer, QS, audits…) from the rate card below.</span></div></div>`;
+   <div class="feebox" style="align-self:end"><span class="muted small" style="font-weight:600">Fee</span> <span id="pmcfee"></span></div></div>
+  <div class="row" style="margin-top:6px"><button class="btn pri" data-act="pmcapply">${ic('plus', 'sm')} Add fee to quote</button><button class="btn" data-act="pmcpay">Use PMC payment stages</button>
+  <span class="hint">${ic('info', 'sm')} Adds a line under “${PMC_SEC}”. Add resources (site engineer, QS, audits…) from the rate card below.</span></div></div>`;
   updPmc();
 }
 function updPmc() { const e = $('#pmcfee'); if (e) e.textContent = inr(pmcFee()); }
 
 function secHtml(si) {
   const s = Q.data.sections[si];
-  return `<div class="sec" data-s="${si}"><div class="sec-h"><span class="muted">${si + 1}.</span><input data-sf="title" value="${esc(s.title)}" placeholder="Section title">
-   <span class="muted small nw" id="ss-${si}"></span>${Q.data.sections.length > 1 ? '<button class="btn sm dng" data-act="delsec" title="Remove section">✕</button>' : ''}</div>
-  <div class="scroll"><table class="items"><thead><tr><th>#</th><th>Description</th><th>Unit</th><th>Qty</th><th>Rate (₹)</th><th class="r">Amount (₹)</th><th></th></tr></thead><tbody>
-  ${s.items.map((it, ii) => `<tr data-i="${ii}"><td class="muted" style="width:38px;padding-top:11px">${si + 1}.${ii + 1}</td>
+  return `<div class="sec" data-s="${si}"><div class="sec-h"><span class="sn">${si + 1}</span><input data-sf="title" value="${esc(s.title)}" placeholder="Section title">
+   <span class="st nw tnum" id="ss-${si}"></span>${Q.data.sections.length > 1 ? `<button class="btn sm ico dng" data-act="delsec" title="Remove section" aria-label="Remove section">${ic('trash', 'sm')}</button>` : ''}</div>
+  <div class="scroll"><table class="items"><thead><tr><th>#</th><th>Description</th><th>Unit</th><th>Qty</th><th>Rate (₹)</th><th style="text-align:right">Amount (₹)</th><th></th></tr></thead><tbody>
+  ${s.items.map((it, ii) => `<tr data-i="${ii}"><td class="ix" style="width:38px">${si + 1}.${ii + 1}</td>
    <td><textarea data-f="desc" rows="1">${esc(it.desc)}</textarea></td><td style="width:84px"><input data-f="unit" list="units" value="${esc(it.unit)}"></td>
    <td style="width:96px"><input data-f="qty" type="number" step="any" min="0" value="${esc(it.qty)}"></td><td style="width:116px"><input data-f="rate" type="number" step="any" min="0" value="${esc(it.rate)}"></td>
-   <td class="amt" style="width:120px" id="a-${si}-${ii}"></td><td style="width:34px"><button class="btn sm dng" data-act="delitem" title="Remove">✕</button></td></tr>`).join('')}
+   <td class="amt" style="width:120px" id="a-${si}-${ii}"></td><td style="width:38px"><button class="btn sm ico ghost" data-act="delitem" title="Remove item" aria-label="Remove item" style="color:var(--mut)">${ic('x', 'sm')}</button></td></tr>`).join('')}
   </tbody></table></div>
-  <div class="sec-f"><button class="btn sm" data-act="addrate">+ From rate card</button><button class="btn sm" data-act="additem">+ Custom item</button></div></div>`;
+  <div class="sec-f"><button class="btn sm" data-act="addrate">${ic('rates', 'sm')} From rate card</button><button class="btn sm" data-act="additem">${ic('plus', 'sm')} Custom item</button></div></div>`;
 }
 function drawSections() {
   $('#sections').innerHTML = Q.data.sections.map((_, i) => secHtml(i)).join('');
   $$('#sections textarea').forEach(growTa);
   recalc();
 }
-function growTa(t) { t.style.height = 'auto'; t.style.height = Math.max(34, t.scrollHeight) + 'px'; }
+function growTa(t) { t.style.height = 'auto'; t.style.height = Math.max(36, t.scrollHeight + 2) + 'px'; }
 
 function drawPay() {
   const pay = Q.data.payment_schedule;
-  $('#paybox').innerHTML = `<table class="items" style="min-width:0"><tbody>${pay.map((p, i) => `<tr data-p="${i}"><td><input data-pf="label" value="${esc(p.label)}" placeholder="Stage"></td>
-  <td style="width:78px"><input data-pf="percent" type="number" step="any" min="0" value="${esc(p.percent)}"></td><td class="amt" style="width:110px" id="pa-${i}"></td><td style="width:34px"><button class="btn sm dng" data-act="delpay">✕</button></td></tr>`).join('')}</tbody></table>
-  <div class="row" style="margin-top:8px"><button class="btn sm" data-act="addpay">+ Add stage</button><span class="sp"></span><span class="small" id="paytot"></span></div>`;
+  $('#paybox').innerHTML = `<div class="pays">${pay.map((p, i) => `<div class="pay" data-p="${i}"><input class="pl" data-pf="label" value="${esc(p.label)}" placeholder="Stage name">
+  <div class="pp"><input data-pf="percent" type="number" step="any" min="0" value="${esc(p.percent)}" aria-label="Percent"><span class="muted">%</span></div><div class="pa" id="pa-${i}"></div>
+  <button class="btn sm ico ghost" data-act="delpay" aria-label="Remove stage" style="color:var(--mut)">${ic('x', 'sm')}</button></div>`).join('')}</div>
+  <div class="row" style="margin-top:10px"><button class="btn sm" data-act="addpay">${ic('plus', 'sm')} Add stage</button><span class="sp"></span><span class="chip plain" id="paytot"></span></div>`;
   recalc();
 }
 
@@ -181,12 +188,12 @@ function recalc() {
   d.sections.forEach((s, si) => {
     let st = 0;
     s.items.forEach((it, ii) => { const a = r2(n(it.qty) * n(it.rate)); st += a; const e = $(`#a-${si}-${ii}`); if (e) e.textContent = fmt(a); });
-    const e = $(`#ss-${si}`); if (e) e.textContent = 'Section total ' + inr(st);
+    const e = $(`#ss-${si}`); if (e) e.textContent = inr(st);
   });
   let pp = 0;
   d.payment_schedule.forEach((p, i) => { pp += n(p.percent); const e = $(`#pa-${i}`); if (e) e.textContent = inr(r2(t.total * n(p.percent) / 100)); });
   const pt = $('#paytot');
-  if (pt) { pt.textContent = `Total ${r2(pp)}%`; pt.style.color = d.payment_schedule.length && Math.abs(pp - 100) > 0.01 ? 'var(--bad)' : 'var(--ok)'; pt.title = Math.abs(pp - 100) > 0.01 ? 'Stages should add up to 100%' : ''; }
+  if (pt) { const bad = d.payment_schedule.length && Math.abs(pp - 100) > 0.01; pt.textContent = `Total ${r2(pp)}%`; pt.style.color = bad ? 'var(--bad)' : 'var(--ok)'; pt.style.background = bad ? 'var(--badbg)' : 'var(--okbg)'; pt.title = Math.abs(pp - 100) > 0.01 ? 'Stages should add up to 100%' : ''; }
   const rsq = $('#rsq'), area = n(d.area_sqft);
   if (rsq) rsq.textContent = area > 0 && t.sub > 0 ? `≈ ${inr0(t.total / area)} per sq ft (incl. GST) on ${area} sq ft` : '';
 }
@@ -220,7 +227,7 @@ function wireEditor() {
       if (t.tagName === 'TEXTAREA') growTa(t);
       markDirty(); recalc(); return;
     }
-    if (t.dataset.pf) { Q.data.payment_schedule[+t.closest('tr').dataset.p][t.dataset.pf] = t.value; markDirty(); recalc(); }
+    if (t.dataset.pf) { Q.data.payment_schedule[+t.closest('[data-p]').dataset.p][t.dataset.pf] = t.value; markDirty(); recalc(); }
   };
   v.oninput = onField;
   v.onchange = e => {
@@ -238,7 +245,7 @@ function wireEditor() {
     else if (a === 'delitem') { Q.data.sections[si].items.splice(+t.closest('tr').dataset.i, 1); markDirty(); drawSections(); }
     else if (a === 'addrate') pickRates(si);
     else if (a === 'addpay') { Q.data.payment_schedule.push({ label: '', percent: '' }); markDirty(); drawPay(); }
-    else if (a === 'delpay') { Q.data.payment_schedule.splice(+t.closest('tr').dataset.p, 1); markDirty(); drawPay(); }
+    else if (a === 'delpay') { Q.data.payment_schedule.splice(+t.closest('[data-p]').dataset.p, 1); markDirty(); drawPay(); }
     else if (a === 'pmcpay') { Q.data.payment_schedule = parsePay(S.settings.pay_pmc); markDirty(); drawPay(); toast('Payment stages set', 'ok'); }
     else if (a === 'pmcapply') applyPmc();
     else if (a === 'revise') guard(reviseQuote);
@@ -264,8 +271,8 @@ function applyPmc() {
 
 function pickRates(si) {
   let div = Q.division, term = '';
-  const m = openModal(`<h2>Add from rate card</h2><div class="row"><select id="pd" style="width:auto">${divOptions(div, true).replace('All divisions', 'All divisions')}</select><input id="pq" placeholder="Search items…" style="flex:1" autofocus></div>
-  <div class="pick" id="pl"></div><div class="row" style="margin-top:12px"><span class="muted small">Click an item to add it (quantity 1). You can add several, then edit quantities in the quote.</span><span class="sp"></span><button class="btn pri" id="done">Done</button></div>`, true);
+  const m = openModal(`<h2>Add from rate card</h2><div class="row" style="flex-wrap:nowrap"><select id="pd" style="width:auto">${divOptions(div, true)}</select><div class="inp-ic" style="flex:1">${ic('search')}<input id="pq" placeholder="Search items…" autofocus></div></div>
+  <div class="pick" id="pl"></div><div class="row" style="margin-top:12px"><span class="hint">${ic('info', 'sm')} Click an item to add it (qty 1). Add several, then edit quantities in the quote.</span><span class="sp"></span><button class="btn pri" id="done">Done</button></div>`, true);
   $('#pd', m.el).value = div;
   const draw = () => {
     const rows = S.rates.filter(r => r.active && (!div || r.division === div) && (!term || (r.name + ' ' + r.category).toLowerCase().includes(term)));
@@ -273,7 +280,7 @@ function pickRates(si) {
     rows.forEach(r => {
       const cat = (div ? '' : DIVS[r.division] + ' · ') + (r.category || 'General');
       if (cat !== last) { html += `<div class="cat">${esc(cat)}</div>`; last = cat; }
-      html += `<div class="it" data-id="${r.id}"><span class="nm">${esc(r.name)}</span><span class="muted small">${esc(r.unit)}</span><b>${fmt(r.rate)}</b></div>`;
+      html += `<div class="it" data-id="${r.id}"><span class="nm">${esc(r.name)}</span><span class="muted small">${esc(r.unit)}</span><b class="tnum">${fmt(r.rate)}</b></div>`;
     });
     $('#pl', m.el).innerHTML = html || '<p class="muted" style="padding:12px">No matching items. Add items under Rate Cards.</p>';
   };
@@ -331,21 +338,24 @@ async function pagePrint(id) {
     });
     if (multi) body += `<tr class="ss"><td colspan="5" class="num">Sub-total — ${esc(sec.title)}</td><td class="num">${fmt(st)}</td></tr>`;
   });
-  const pay = d.payment_schedule.length ? `<h4>Payment schedule</h4><table class="q"><thead><tr><th>Stage</th><th class="num">%</th><th class="num">Amount (₹)</th></tr></thead><tbody>${d.payment_schedule.map(p => `<tr><td>${esc(p.label)}</td><td class="num">${esc(n(p.percent))}%</td><td class="num">${fmt(r2(t.total * n(p.percent) / 100))}</td></tr>`).join('')}</tbody></table>` : '';
-  $('#view').innerHTML = `<div class="toolbar noprint"><a class="btn" href="#/quotes/${Q.id}">← Back to editor</a><button class="btn pri" id="pr">Print / Save as PDF</button><span class="muted small">In the print dialog choose “Save as PDF” as the destination. Turn off “Headers and footers” for a clean page.</span></div>
-  <div class="doc">
-   <div class="hd"><div class="co">${s.company_logo ? `<img src="${esc(s.company_logo)}" alt="">` : ''}<div><h2>${esc(s.company_name)}</h2><div>${esc(s.company_tagline)}</div><div>${esc(s.company_address)}</div><div>${[s.company_phone && 'Phone: ' + s.company_phone, s.company_email && 'Email: ' + s.company_email, s.company_gstin && 'GSTIN: ' + s.company_gstin].filter(Boolean).map(esc).join(' · ')}</div></div></div>
-   <div class="qt"><h1>QUOTATION</h1><table><tr><td>Quote no.</td><td><b>${esc(Q.quote_no)}</b></td></tr>${Q.rev ? `<tr><td>Revision</td><td>${Q.rev}</td></tr>` : ''}<tr><td>Date</td><td>${fdate(Q.quote_date)}</td></tr><tr><td>Valid until</td><td>${fdate(Q.valid_until)}</td></tr><tr><td>Division</td><td>${esc(DIVS[Q.division])}</td></tr></table></div></div>
+  const pay = d.payment_schedule.length ? `<div><h4>Payment schedule</h4><table class="q"><thead><tr><th>Stage</th><th class="num">%</th><th class="num">Amount (₹)</th></tr></thead><tbody>${d.payment_schedule.map(p => `<tr><td>${esc(p.label)}</td><td class="num">${esc(n(p.percent))}%</td><td class="num">${fmt(r2(t.total * n(p.percent) / 100))}</td></tr>`).join('')}</tbody></table></div>` : '';
+  const hasBank = s.bank_details && s.bank_details.replace(/[\s\w ]*:\s*/g, '').trim();
+  const bank = hasBank ? `<div><h4>Bank details</h4><div class="bank"><pre>${esc(s.bank_details)}</pre></div></div>` : '';
+  $('#view').innerHTML = `<div class="toolbar noprint"><a class="btn" href="#/quotes/${Q.id}">${ic('back', 'sm')} Back to editor</a><button class="btn gold" id="pr">${ic('print', 'sm')} Print / Save as PDF</button><span class="hint">${ic('info', 'sm')} Choose “Save as PDF” as the destination and turn off “Headers and footers”.</span></div>
+  <div class="doc"><div class="bandtop"></div><div class="in">
+   <div class="hd"><div class="co">${s.company_logo ? `<img src="${esc(s.company_logo)}" alt="">` : ''}<div><h2>${esc(s.company_name)}</h2>${s.company_tagline ? `<div class="tg">${esc(s.company_tagline)}</div>` : ''}<div>${esc(s.company_address)}</div><div>${[s.company_phone && 'T: ' + s.company_phone, s.company_email && 'E: ' + s.company_email, s.company_gstin && 'GSTIN: ' + s.company_gstin].filter(Boolean).map(esc).join('  ·  ')}</div></div></div>
+   <div class="qt"><h1>QUOTATION</h1><div class="qn">No. <b>${esc(Q.quote_no)}</b>${Q.rev ? ` · Rev ${Q.rev}` : ''}</div></div></div>
+   <div class="meta"><div><small>Date</small><b>${fdate(Q.quote_date)}</b></div><div><small>Valid until</small><b>${fdate(Q.valid_until)}</b></div><div><small>Division</small><b>${esc(DIVS[Q.division])}</b></div><div><small>Area</small><b>${n(d.area_sqft) ? esc(n(d.area_sqft)) + ' sq ft' : '—'}</b></div></div>
    <div class="two"><div class="box"><h5>Quotation for</h5><div><b>${esc(c.name)}</b>${c.contact_person ? '\nAttn: ' + esc(c.contact_person) : ''}${c.address ? '\n' + esc(c.address) : ''}${c.phone ? '\nPhone: ' + esc(c.phone) : ''}${c.email ? '\nEmail: ' + esc(c.email) : ''}${c.gstin ? '\nGSTIN: ' + esc(c.gstin) : ''}</div></div>
-   <div class="box"><h5>Project</h5><div><b>${esc(Q.title || '—')}</b>${d.site_address ? '\nSite: ' + esc(d.site_address) : ''}${n(d.area_sqft) ? '\nArea: ' + esc(n(d.area_sqft)) + ' sq ft' : ''}</div></div></div>
+   <div class="box"><h5>Project</h5><div><b>${esc(Q.title || '—')}</b>${d.site_address ? '\nSite: ' + esc(d.site_address) : ''}</div></div></div>
    ${d.scope ? `<h4>Scope of work</h4><pre>${esc(d.scope)}</pre>` : ''}
-   <table class="q" style="margin-top:10px"><thead><tr><th style="width:36px">#</th><th>Description</th><th style="width:48px">Unit</th><th class="num" style="width:56px">Qty</th><th class="num" style="width:84px">Rate (₹)</th><th class="num" style="width:100px">Amount (₹)</th></tr></thead><tbody>${body || '<tr><td colspan="6">No items</td></tr>'}</tbody></table>
-   <div class="sum"><div class="w">${esc(amountWords(t.total))}</div><table><tr><td>Subtotal</td><td>${fmt(t.sub)}</td></tr>${t.disc ? `<tr><td>Discount${d.discount.type === 'percent' ? ' (' + n(d.discount.value) + '%)' : ''}</td><td>− ${fmt(t.disc)}</td></tr><tr><td>Taxable amount</td><td>${fmt(t.taxable)}</td></tr>` : ''}<tr><td>GST @ ${n(d.tax_rate)}%</td><td>${fmt(t.tax)}</td></tr>${d.round_off && t.ro ? `<tr><td>Round off</td><td>${t.ro < 0 ? '− ' : ''}${fmt(Math.abs(t.ro))}</td></tr>` : ''}<tr class="g"><td>Grand total (₹)</td><td>${fmt(t.total)}</td></tr></table></div>
-   ${pay}
+   <h4>Bill of quantities</h4>
+   <table class="q"><thead><tr><th style="width:36px">#</th><th>Description</th><th style="width:48px">Unit</th><th class="num" style="width:56px">Qty</th><th class="num" style="width:84px">Rate (₹)</th><th class="num" style="width:100px">Amount (₹)</th></tr></thead><tbody>${body || '<tr><td colspan="6">No items</td></tr>'}</tbody></table>
+   <div class="sum"><div class="w"><small>Amount in words</small><span>${esc(amountWords(t.total))}</span></div><table><tr><td>Subtotal</td><td>${fmt(t.sub)}</td></tr>${t.disc ? `<tr><td>Discount${d.discount.type === 'percent' ? ' (' + n(d.discount.value) + '%)' : ''}</td><td>− ${fmt(t.disc)}</td></tr><tr><td>Taxable amount</td><td>${fmt(t.taxable)}</td></tr>` : ''}<tr><td>GST @ ${n(d.tax_rate)}%</td><td>${fmt(t.tax)}</td></tr>${d.round_off && t.ro ? `<tr><td>Round off</td><td>${t.ro < 0 ? '− ' : ''}${fmt(Math.abs(t.ro))}</td></tr>` : ''}<tr class="g"><td>Grand total (₹)</td><td>${fmt(t.total)}</td></tr></table></div>
+   ${pay || bank ? `<div class="cols">${pay}${bank}</div>` : ''}
    ${d.terms.length ? `<h4>Terms &amp; conditions</h4><ol>${d.terms.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
    ${d.notes ? `<h4>Notes</h4><pre>${esc(d.notes)}</pre>` : ''}
-   ${s.bank_details && s.bank_details.replace(/[\s\w ]*:\s*/g, '').trim() ? `<h4>Bank details</h4><pre>${esc(s.bank_details)}</pre>` : ''}
-   <div class="sig"><div>Client acceptance &amp; date</div><div>For ${esc(s.company_name)}${s.signatory ? '<br><b>' + esc(s.signatory) + '</b>' : ''}<br>Authorised signatory</div></div>
-   <div class="foot">This is a computer-generated quotation · ${esc(Q.quote_no)}</div></div>`;
+   <div class="sig"><div>Client acceptance &amp; date</div><div>For ${esc(s.company_name)}${s.signatory ? '<br><b>' + esc(s.signatory) + '</b>' : ''}<br>Authorised signatory</div></div></div>
+   <div class="foot"><span><b>Thank you for the opportunity.</b></span><span>Computer-generated quotation · ${esc(Q.quote_no)}</span></div></div>`;
   $('#pr').onclick = () => window.print();
 }

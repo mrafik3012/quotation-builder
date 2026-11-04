@@ -4,6 +4,8 @@ A self-hosted quotation app for **Sheet Roofing, Interior, Construction and PMC*
 PHP 8 + MySQL, no build step — runs on Hostinger Cloud / shared hosting.
 
 ## Features
+- **Premium corporate UI**: navy + brass design system, icon navigation, executive dashboard with animated KPIs and charts, division-coloured accents, mobile bottom navigation, split-screen sign-in
+- **Letterhead-style quotation** (A4, print-ready) with sticky live-total summary while editing
 - Quote editor with sections and line items, picked from editable **rate cards** per division
 - Discount (% or flat), GST, round-off, payment schedule, terms & conditions, notes
 - **PMC fee calculator**: % of project cost, per sq ft, or monthly retainer
