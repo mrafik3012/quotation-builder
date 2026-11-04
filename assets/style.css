@@ -98,7 +98,7 @@ table{border-collapse:collapse;width:100%}
 .feebox{background:#1a1608;border:1px dashed var(--brand);border-radius:10px;padding:10px 14px;font-weight:700}
 
 /* ---------- printable quotation ---------- */
-.toolbar{display:flex;gap:10px;margin-bottom:14px;align-items:center}
+.toolbar{display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap}
 .doc{background:#fff;--brand:#b8921f;--brand-d:#8a6a0f;max-width:210mm;margin:0 auto;padding:14mm 14mm;box-shadow:0 2px 16px rgba(0,0,0,.12);font-size:12.5px;color:#111;line-height:1.45}
 .doc .hd{display:flex;justify-content:space-between;gap:20px;border-bottom:3px solid #d4af37;padding-bottom:10px;margin-bottom:12px}
 .doc .co{display:flex;gap:12px;align-items:flex-start}.doc .co img{max-height:78px;max-width:190px;object-fit:contain}
@@ -124,7 +124,8 @@ table{border-collapse:collapse;width:100%}
 .doc .foot{margin-top:14px;font-size:10.5px;color:#94a3b8;text-align:center}
 .doc pre{font:inherit;margin:0;white-space:pre-wrap}
 
-@media (max-width:860px){
+@media screen and (max-width:860px){
+ .card,.doc,.modal{overflow-x:auto}
  .shell{flex-direction:column}
  .side{width:auto;height:auto;position:static;flex-direction:row;flex-wrap:wrap;align-items:center}
  .side .brand{border:0;padding:10px 14px}.side nav{display:flex;flex-wrap:wrap;padding:0 8px 8px;flex-basis:100%;order:3}

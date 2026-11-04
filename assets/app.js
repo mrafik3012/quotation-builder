@@ -92,6 +92,7 @@ async function init() {
     S.user = me.user;
     await loadBootstrap();
     route();
+    setInterval(() => { if (S.user) api('auth/me').catch(() => {}); }, 8 * 60 * 1000); // keep the session alive while a long quote is being edited
   } catch (e) {
     $('#app').innerHTML = `<div class="login"><img class="logo" src="assets/logo.png" alt="Infraura"><h1>Quotation Builder</h1><p class="muted">${esc(e.message)}</p></div>`;
   }
@@ -327,7 +328,7 @@ async function pageRates() {
       }).filter(x => x.name);
       if (!items.length) throw new Error('No valid rows found. Columns needed: division, category, name, unit, rate, description');
       const res = await api('rates/import', 'POST', { items });
-      toast(res.imported + ' items imported', 'ok'); pageRates();
+      toast(res.imported + ' item(s) imported' + (res.skipped ? ', ' + res.skipped + ' skipped (already in your rate card)' : ''), 'ok'); pageRates();
     });
     rd.readAsText(file); e.target.value = '';
   };

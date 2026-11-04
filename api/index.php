@@ -70,6 +70,7 @@ function route(string $m, string $a, ?string $b, ?string $c): void
     }
 
     $user = require_auth();
+    $GLOBALS['CURRENT_USER'] = $user;
     ensure_schema();
 
     switch ($a) {
@@ -241,16 +242,25 @@ function rates_route(string $m, ?string $b): void
         $items = $d['items'] ?? [];
         if (!is_array($items) || !$items) fail('No rows to import');
         if (count($items) > 2000) fail('Too many rows (max 2000)');
-        $n = 0;
-        db()->beginTransaction();
-        foreach ($items as $it) {
+        $rows = [];
+        foreach ($items as $i => $it) {   // validate everything first so a bad row cannot cause a half-finished import
             if (!is_array($it)) continue;
-            $f = rate_fields($it);
+            try { $rows[] = rate_fields($it); } catch (Throwable $e) { throw $e; }
+        }
+        $have = [];
+        foreach (q('SELECT division, name, unit FROM rate_items')->fetchAll() as $r) $have[strtolower($r['division'] . '|' . $r['name'] . '|' . $r['unit'])] = true;
+        $n = 0; $skipped = 0;
+        db()->beginTransaction();
+        foreach ($rows as $f) {
+            $key = strtolower($f[0] . '|' . $f[2] . '|' . $f[3]);
+            if (isset($have[$key])) { $skipped++; continue; }
+            $have[$key] = true;
             q('INSERT INTO rate_items (division,category,name,unit,rate,description,active,cost,sort) VALUES (?,?,?,?,?,?,?,?,9999)', $f);
             $n++;
         }
         db()->commit();
-        json_out(['imported' => $n], 201);
+        audit($GLOBALS['CURRENT_USER'] ?? [], 'rates.import', "$n added, $skipped duplicates skipped");
+        json_out(['imported' => $n, 'skipped' => $skipped], 201);
     }
     if ($m === 'POST') {
         $f = rate_fields(body());
@@ -491,12 +501,17 @@ function quotes_route(string $m, ?string $b, ?string $c, array $user): void
     if ($m === 'PUT' && $c === null) {
         if ($row['status'] === 'superseded') fail('This revision is superseded and read-only. Open the latest revision.', 409);
         if ($row['status'] === 'accepted') fail('This quotation has been accepted and is locked. Create a new revision to change it.', 409);
-        [$division, $title, $data, $client, $date, $valid, $cid] = clean_quote_input(body(), $row['division']);
+        $in = body();
+        // optimistic lock: refuse to overwrite changes someone else (or the client) made since this screen was loaded
+        if (isset($in['updated_at']) && (string)$in['updated_at'] !== (string)$row['updated_at']) fail('This quotation was changed by someone else since you opened it. Reload the page to see the latest version (copy any unsaved notes first).', 409);
+        [$division, $title, $data, $client, $date, $valid, $cid] = clean_quote_input($in, $row['division']);
         [$cid, $client] = resolve_client($cid, $client);
         [$sub, $disc, $tax, $round, $total] = compute_totals($data);
-        q('UPDATE quotes SET client_id=?,client_json=?,title=?,quote_date=?,valid_until=?,data=?,subtotal=?,discount=?,tax=?,round_off=?,total=?,updated_at=? WHERE id=?',
-            [$cid, json_encode($client, JSON_UNESCAPED_UNICODE), $title, $date, $valid, json_encode($data, JSON_UNESCAPED_UNICODE), $sub, $disc, $tax, $round, $total, now(), $id]);
-        json_out(['ok' => true, 'total' => $total, 'client_id' => $cid]);
+        $ts = now();
+        $upd = q('UPDATE quotes SET client_id=?,client_json=?,title=?,quote_date=?,valid_until=?,data=?,subtotal=?,discount=?,tax=?,round_off=?,total=?,updated_at=? WHERE id=? AND status <> ? AND status <> ?',
+            [$cid, json_encode($client, JSON_UNESCAPED_UNICODE), $title, $date, $valid, json_encode($data, JSON_UNESCAPED_UNICODE), $sub, $disc, $tax, $round, $total, $ts, $id, 'accepted', 'superseded']);
+        if ($upd->rowCount() !== 1) fail('This quotation can no longer be edited (it was accepted or revised a moment ago). Reload the page.', 409);
+        json_out(['ok' => true, 'total' => $total, 'client_id' => $cid, 'updated_at' => $ts]);
     }
 
     if ($m === 'DELETE' && $c === 'share') {
@@ -512,7 +527,8 @@ function quotes_route(string $m, ?string $b, ?string $c, array $user): void
         if (!$ex) q('INSERT INTO quote_shares (quote_no,token,created_at) VALUES (?,?,?)', [$row['quote_no'], $tok, now()]);
         if ($row['status'] === 'draft') q('UPDATE quotes SET status=?, updated_at=? WHERE id=?', ['sent', now(), $id]);
         log_event($row['quote_no'], (int)$row['rev'], 'shared', ['by' => $user['name']], $user['name']);
-        json_out(['token' => $tok]);
+        $fresh = q('SELECT updated_at FROM quotes WHERE id = ?', [$id])->fetch();
+        json_out(['token' => $tok, 'updated_at' => $fresh['updated_at']]);
     }
 
     if ($m === 'POST' && $c === 'status') {

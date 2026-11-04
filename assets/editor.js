@@ -148,7 +148,7 @@ function waLink(phone, text) {
 }
 async function shareQuote() {
   if (Q.status !== 'accepted') await ensureSaved();
-  const r = await api(`quotes/${Q.id}/share`, 'POST'); Q.share = r.token; if (Q.status === 'draft') Q.status = 'sent';
+  const r = await api(`quotes/${Q.id}/share`, 'POST'); Q.share = r.token; Q.updated_at = r.updated_at; if (Q.status === 'draft') Q.status = 'sent';
   const url = shareUrl(r.token), s = S.settings, c = Q.client;
   const msg = `Hello ${c.contact_person || c.name || ''},\nPlease find your quotation ${Q.quote_no}${Q.title ? ' for ' + Q.title : ''} from ${s.company_name}.\nView, choose your option and accept online: ${url}\nValid until ${fdate(Q.valid_until)}.`;
   const m = openModal(`<h2>Share quotation ${esc(Q.quote_no)}</h2>
@@ -425,13 +425,13 @@ function pickRates(si, opt) {
 async function saveQuote() {
   const d = Q.data;
   if (!Q.client.name.trim()) { toast('Enter the client name before saving', 'err'); return false; }
-  const body = { division: Q.division, client_id: Q.client_id || null, client: Q.client, title: Q.title, quote_date: Q.quote_date, valid_until: Q.valid_until, data: d };
+  const body = { division: Q.division, client_id: Q.client_id || null, client: Q.client, title: Q.title, quote_date: Q.quote_date, valid_until: Q.valid_until, data: d, updated_at: Q.updated_at };
   if (!Q.id) {
     const r = await api('quotes', 'POST', body);
     window.__dirty = false; S.clients = await api('clients'); toast('Saved as ' + r.quote_no, 'ok'); location.hash = '#/quotes/' + r.id;
   } else {
     const r = await api('quotes/' + Q.id, 'PUT', body);
-    window.__dirty = false; Q.client_id = r.client_id || Q.client_id; S.clients = await api('clients'); toast('Saved', 'ok');
+    window.__dirty = false; Q.client_id = r.client_id || Q.client_id; Q.updated_at = r.updated_at; S.clients = await api('clients'); toast('Saved', 'ok');
   }
   return true;
 }

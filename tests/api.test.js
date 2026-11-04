@@ -173,6 +173,31 @@ const quoteBody = (over = {}) => ({
   });
   await test('milestone with receipts cannot be deleted', async () => eq((await admin.api('DELETE', `projects/${pid}/milestones/${ms[0].id}`)).status, 400));
 
+  console.log('\nConcurrency & data safety');
+  await test('two people editing: the second save is refused instead of silently overwriting', async () => {
+    const q = (await admin.api('POST', 'quotes', quoteBody())).data; const g = (await admin.api('GET', `quotes/${q.id}`)).data.quote;
+    await new Promise(r => setTimeout(r, 1100)); // timestamps have 1-second resolution
+    const first = await admin.api('PUT', `quotes/${q.id}`, { ...quoteBody(), updated_at: g.updated_at }); eq(first.status, 200); ok(first.data.updated_at, 'returns new timestamp');
+    const stale = await admin.api('PUT', `quotes/${q.id}`, { ...quoteBody(), updated_at: g.updated_at }); eq(stale.status, 409);
+    const fresh = await admin.api('PUT', `quotes/${q.id}`, { ...quoteBody(), updated_at: first.data.updated_at }); eq(fresh.status, 200);
+  });
+  await test('emoji and unicode survive a round trip (utf8mb4)', async () => {
+    const b = quoteBody({ title: 'Villa 🏠 नमस्ते ₹' }); const q = (await admin.api('POST', 'quotes', b)).data;
+    eq((await admin.api('GET', `quotes/${q.id}`)).data.quote.title, 'Villa 🏠 नमस्ते ₹');
+  });
+  await test('rate-card import skips duplicates and rejects bad rows without importing anything', async () => {
+    const good = { division: 'roofing', category: 'QA', name: 'QA item ' + Date.now(), unit: 'nos', rate: 10 };
+    const bad = await admin.api('POST', 'rates/import', { items: [good, { division: 'nonsense', name: 'bad', rate: 1 }] }); eq(bad.status, 400);
+    const r1 = await admin.api('POST', 'rates/import', { items: [good, good] }); eq(r1.data.imported, 1); eq(r1.data.skipped, 1);
+    const r2 = await admin.api('POST', 'rates/import', { items: [good] }); eq(r2.data.imported, 0);
+  });
+  await test('totals with flat discount, round-off and non-18% GST match across edits', async () => {
+    const b = quoteBody(); b.data.sections[0].items = [item('A', 3, 333.33), item('B', 1.5, 99.99)]; b.data.discount = { type: 'flat', value: 77.77 }; b.data.tax_rate = 12; b.data.round_off = true;
+    const q = (await admin.api('POST', 'quotes', b)).data; const g = (await admin.api('GET', `quotes/${q.id}`)).data.quote;
+    const sub = Math.round((3 * 333.33 + 1.5 * 99.99) * 100) / 100, taxable = sub - 77.77, tax = Math.round(taxable * 12) / 100;
+    near(g.subtotal, sub, 'subtotal'); near(g.tax, tax, 'tax'); eq(g.total, Math.round(taxable + tax), 'rounded total');
+  });
+
   console.log('\nSettings validation');
   await test('non-numeric validity days / negative margin are rejected', async () => {
     eq((await admin.api('PUT', 'settings', { validity_days: 'abc' })).status, 400);
