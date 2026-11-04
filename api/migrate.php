@@ -3,7 +3,7 @@ declare(strict_types=1);
 // Lightweight forward-only migrations. Runs automatically (once per version) on the first signed-in request,
 // so already-installed sites upgrade just by uploading the new files.
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 function ensure_schema(): void
 {
@@ -26,6 +26,15 @@ function ensure_schema(): void
         db()->exec("CREATE TABLE IF NOT EXISTS quote_templates (id $pk, name VARCHAR(190) NOT NULL, division VARCHAR(20) NOT NULL, data $long, created_at VARCHAR(19) NOT NULL)$eng");
         if ((int)q('SELECT COUNT(*) AS n FROM quote_templates')->fetch()['n'] === 0) seed_templates();
         if (get_setting('min_margin') === null) set_setting('min_margin', '15');
+    }
+    if ($cur < 2) {
+        // client share links + activity log (views, accept / reject with e-signature)
+        db()->exec("CREATE TABLE IF NOT EXISTS quote_shares (id $pk, quote_no VARCHAR(40) NOT NULL UNIQUE, token VARCHAR(48) NOT NULL UNIQUE, created_at VARCHAR(19) NOT NULL)$eng");
+        db()->exec("CREATE TABLE IF NOT EXISTS quote_events (id $pk, quote_no VARCHAR(40) NOT NULL, rev INT NOT NULL DEFAULT 0, type VARCHAR(20) NOT NULL, detail $long, actor VARCHAR(190), ip VARCHAR(45), created_at VARCHAR(19) NOT NULL)$eng");
+        db()->exec('CREATE INDEX idx_events_no ON quote_events (quote_no)');
+        foreach (['roofing' => '9954', 'interior' => '9954', 'construction' => '9954', 'pmc' => '9983'] as $k => $v) {
+            if (get_setting('hsn_' . $k) === null) set_setting('hsn_' . $k, $v);
+        }
     }
     set_setting('schema_v', (string)SCHEMA_VERSION);
 }

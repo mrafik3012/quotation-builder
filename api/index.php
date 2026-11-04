@@ -344,6 +344,8 @@ function clean_quote_input(array $d, ?string $existingDivision = null): array
         'area_sqft' => num($data['area_sqft'] ?? 0),
         'pmc' => is_array($data['pmc'] ?? null) ? $data['pmc'] : null,
         'roofcalc' => clean_roofcalc($data['roofcalc'] ?? null),
+        'gst_mode' => in_array($data['gst_mode'] ?? '', ['intra', 'inter'], true) ? $data['gst_mode'] : '',
+        'hsn' => str($data['hsn'] ?? '', 20),
     ];
     $c = is_array($d['client'] ?? null) ? $d['client'] : [];
     $client = ['name' => str($c['name'] ?? '', 190), 'contact_person' => str($c['contact_person'] ?? '', 120), 'phone' => str($c['phone'] ?? '', 40),
@@ -417,7 +419,10 @@ function quotes_route(string $m, ?string $b, ?string $c, array $user): void
 
     if ($m === 'GET' && $c === null) {
         $revs = q('SELECT id,rev,status,total,updated_at FROM quotes WHERE quote_no = ? ORDER BY rev DESC', [$row['quote_no']])->fetchAll();
-        json_out(['quote' => quote_row_out($row, true), 'revisions' => $revs]);
+        $share = q('SELECT token FROM quote_shares WHERE quote_no = ?', [$row['quote_no']])->fetch();
+        $ev = q('SELECT type,detail,actor,created_at,rev FROM quote_events WHERE quote_no = ? ORDER BY id DESC LIMIT 30', [$row['quote_no']])->fetchAll();
+        foreach ($ev as &$e) { $d = json_decode((string)$e['detail'], true) ?: []; $e['has_signature'] = !empty($d['signature']); unset($d['signature']); $e['detail'] = $d ?: new stdClass(); }
+        json_out(['quote' => quote_row_out($row, true), 'revisions' => $revs, 'share' => $share ? $share['token'] : null, 'events' => $ev]);
     }
 
     if ($m === 'PUT' && $c === null) {
@@ -428,6 +433,15 @@ function quotes_route(string $m, ?string $b, ?string $c, array $user): void
         q('UPDATE quotes SET client_id=?,client_json=?,title=?,quote_date=?,valid_until=?,data=?,subtotal=?,discount=?,tax=?,round_off=?,total=?,updated_at=? WHERE id=?',
             [$cid, json_encode($client, JSON_UNESCAPED_UNICODE), $title, $date, $valid, json_encode($data, JSON_UNESCAPED_UNICODE), $sub, $disc, $tax, $round, $total, now(), $id]);
         json_out(['ok' => true, 'total' => $total, 'client_id' => $cid]);
+    }
+
+    if ($m === 'POST' && $c === 'share') {
+        $ex = q('SELECT token FROM quote_shares WHERE quote_no = ?', [$row['quote_no']])->fetch();
+        $tok = $ex ? $ex['token'] : bin2hex(random_bytes(16));
+        if (!$ex) q('INSERT INTO quote_shares (quote_no,token,created_at) VALUES (?,?,?)', [$row['quote_no'], $tok, now()]);
+        if ($row['status'] === 'draft') q('UPDATE quotes SET status=?, updated_at=? WHERE id=?', ['sent', now(), $id]);
+        log_event($row['quote_no'], (int)$row['rev'], 'shared', ['by' => $user['name']], $user['name']);
+        json_out(['token' => $tok]);
     }
 
     if ($m === 'POST' && $c === 'status') {
@@ -470,6 +484,12 @@ function quotes_route(string $m, ?string $b, ?string $c, array $user): void
     fail('Not found', 404);
 }
 
+function log_event(string $quoteNo, int $rev, string $type, array $detail, ?string $actor = null): void
+{
+    q('INSERT INTO quote_events (quote_no,rev,type,detail,actor,ip,created_at) VALUES (?,?,?,?,?,?,?)',
+        [$quoteNo, $rev, $type, json_encode($detail, JSON_UNESCAPED_UNICODE), $actor, substr((string)($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45), now()]);
+}
+
 // ---------------- dashboard ----------------
 function dashboard(): array
 {
@@ -489,5 +509,9 @@ function dashboard(): array
         'by_status' => $cast($byStatus), 'by_division' => $cast($byDiv), 'monthly' => $cast($monthly),
         'recent' => array_map(fn($r) => quote_row_out($r + ['subtotal' => 0, 'discount' => 0, 'tax' => 0, 'round_off' => 0], false), $recent),
         'clients' => (int)q('SELECT COUNT(*) AS n FROM clients')->fetch()['n'],
+        'follow_up' => array_map(fn($r) => quote_row_out($r + ['subtotal' => 0, 'discount' => 0, 'tax' => 0, 'round_off' => 0], false),
+            q("SELECT q.id,q.quote_no,q.rev,q.division,q.client_json,q.title,q.status,q.quote_date,q.valid_until,q.total,q.updated_at,
+                (SELECT COUNT(*) FROM quote_events e WHERE e.quote_no = q.quote_no AND e.type = 'view') AS views
+                FROM quotes q WHERE q.is_latest = 1 AND q.status = 'sent' AND q.updated_at <= ? ORDER BY q.updated_at LIMIT 10", [date('Y-m-d H:i:s', strtotime('-3 days'))])->fetchAll()),
     ];
 }
