@@ -3,7 +3,7 @@ declare(strict_types=1);
 // Lightweight forward-only migrations. Runs automatically (once per version) on the first signed-in request,
 // so already-installed sites upgrade just by uploading the new files.
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 function ensure_schema(): void
 {
@@ -20,7 +20,7 @@ function ensure_schema(): void
     if ($cur < 1) {
         // cost price on rate items (for margin tracking) + reusable quote templates
         if (!column_exists('rate_items', 'cost')) {
-            db()->exec('ALTER TABLE rate_items ADD COLUMN cost DECIMAL(14,2) NOT NULL DEFAULT 0');
+            ddl('ALTER TABLE rate_items ADD COLUMN cost DECIMAL(14,2) NOT NULL DEFAULT 0');
             db()->exec('UPDATE rate_items SET cost = ROUND(rate * 0.8, 2) WHERE cost = 0');
         }
         db()->exec("CREATE TABLE IF NOT EXISTS quote_templates (id $pk, name VARCHAR(190) NOT NULL, division VARCHAR(20) NOT NULL, data $long, created_at VARCHAR(19) NOT NULL)$eng");
@@ -31,7 +31,7 @@ function ensure_schema(): void
         // client share links + activity log (views, accept / reject with e-signature)
         db()->exec("CREATE TABLE IF NOT EXISTS quote_shares (id $pk, quote_no VARCHAR(40) NOT NULL UNIQUE, token VARCHAR(48) NOT NULL UNIQUE, created_at VARCHAR(19) NOT NULL)$eng");
         db()->exec("CREATE TABLE IF NOT EXISTS quote_events (id $pk, quote_no VARCHAR(40) NOT NULL, rev INT NOT NULL DEFAULT 0, type VARCHAR(20) NOT NULL, detail $long, actor VARCHAR(190), ip VARCHAR(45), created_at VARCHAR(19) NOT NULL)$eng");
-        db()->exec('CREATE INDEX idx_events_no ON quote_events (quote_no)');
+        ddl('CREATE INDEX idx_events_no ON quote_events (quote_no)');
         foreach (['roofing' => '9954', 'interior' => '9954', 'construction' => '9954', 'pmc' => '9983'] as $k => $v) {
             if (get_setting('hsn_' . $k) === null) set_setting('hsn_' . $k, $v);
         }
@@ -43,13 +43,28 @@ function ensure_schema(): void
         db()->exec("CREATE TABLE IF NOT EXISTS project_receipts (id $pk, project_id INT NOT NULL, milestone_id INT NULL, amount DECIMAL(14,2) NOT NULL, received_on VARCHAR(10) NOT NULL, mode VARCHAR(30), reference VARCHAR(120), note VARCHAR(255), created_at VARCHAR(19) NOT NULL)$eng");
         db()->exec("CREATE TABLE IF NOT EXISTS project_variations (id $pk, project_id INT NOT NULL, title VARCHAR(255) NOT NULL, note TEXT, amount DECIMAL(14,2) NOT NULL DEFAULT 0, status VARCHAR(12) NOT NULL DEFAULT 'proposed', milestone_id INT NULL, created_at VARCHAR(19) NOT NULL)$eng");
         db()->exec("CREATE TABLE IF NOT EXISTS project_log (id $pk, project_id INT NOT NULL, log_date VARCHAR(10) NOT NULL, text TEXT, progress INT NULL, author VARCHAR(120), created_at VARCHAR(19) NOT NULL)$eng");
-        db()->exec('CREATE INDEX idx_pm_proj ON project_milestones (project_id)');
-        db()->exec('CREATE INDEX idx_pr_proj ON project_receipts (project_id)');
+        ddl('CREATE INDEX idx_pm_proj ON project_milestones (project_id)');
+        ddl('CREATE INDEX idx_pr_proj ON project_receipts (project_id)');
     }
     if ($cur < 4) {
         db()->exec("CREATE TABLE IF NOT EXISTS audit_log (id $pk, user_name VARCHAR(120), action VARCHAR(40) NOT NULL, detail VARCHAR(500), created_at VARCHAR(19) NOT NULL)$eng");
     }
+    if ($cur < 5) {
+        ddl("CREATE TABLE IF NOT EXISTS rate_limits (k VARCHAR(80) NOT NULL PRIMARY KEY, hits INT NOT NULL DEFAULT 0, window_start INT NOT NULL DEFAULT 0)$eng");
+        // a quote number + revision must be unique (guards against two people saving at the same instant)
+        ddl('CREATE UNIQUE INDEX uq_quote_no_rev ON quotes (quote_no, rev)');
+    }
     set_setting('schema_v', (string)SCHEMA_VERSION);
+}
+
+/** Run a DDL statement, tolerating "already exists" (two first requests can race during an upgrade). */
+function ddl(string $sql): void
+{
+    try { db()->exec($sql); }
+    catch (PDOException $e) {
+        $m = strtolower($e->getMessage());
+        if (strpos($m, 'already exists') === false && strpos($m, 'duplicate') === false) error_log('migration warning: ' . $e->getMessage());
+    }
 }
 
 function column_exists(string $table, string $col): bool

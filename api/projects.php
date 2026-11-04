@@ -48,10 +48,10 @@ function project_detail(int $id): array
 function receivables_summary(): array
 {
     $rows = q("SELECT p.id, p.base_value, p.tax_rate, p.status,
-        (SELECT COALESCE(SUM(v.amount),0) FROM project_variations v WHERE v.project_id = p.id AND v.status = 'approved') AS var,
+        (SELECT COALESCE(SUM(v.amount),0) FROM project_variations v WHERE v.project_id = p.id AND v.status = 'approved') AS varsum,
         (SELECT COALESCE(SUM(r.amount),0) FROM project_receipts r WHERE r.project_id = p.id) AS rec FROM projects p")->fetchAll();
     $contract = 0.0; $rec = 0.0; $active = 0;
-    foreach ($rows as $r) { $contract += project_total($r, (float)$r['var']); $rec += (float)$r['rec']; if ($r['status'] === 'active') $active++; }
+    foreach ($rows as $r) { $contract += project_total($r, (float)$r['varsum']); $rec += (float)$r['rec']; if ($r['status'] === 'active') $active++; }
     $today = date('Y-m-d');
     $od = q("SELECT COUNT(*) AS n FROM project_milestones m WHERE m.due_date IS NOT NULL AND m.due_date < ? AND m.amount > COALESCE((SELECT SUM(r.amount) FROM project_receipts r WHERE r.milestone_id = m.id),0) + 0.01", [$today])->fetch();
     return ['projects' => count($rows), 'active' => $active, 'contract' => round($contract, 2), 'received' => round($rec, 2), 'outstanding' => round($contract - $rec, 2), 'overdue' => (int)$od['n']];
@@ -74,12 +74,12 @@ function projects_route(string $m, array $p, array $user): void
 
     if ($id === null) {
         if ($m === 'GET') {
-            $rows = q("SELECT p.*, (SELECT COALESCE(SUM(v.amount),0) FROM project_variations v WHERE v.project_id = p.id AND v.status = 'approved') AS var,
+            $rows = q("SELECT p.*, (SELECT COALESCE(SUM(v.amount),0) FROM project_variations v WHERE v.project_id = p.id AND v.status = 'approved') AS varsum,
                 (SELECT COALESCE(SUM(r.amount),0) FROM project_receipts r WHERE r.project_id = p.id) AS rec,
                 (SELECT c.name FROM clients c WHERE c.id = p.client_id) AS client_name,
                 (SELECT COUNT(*) FROM project_milestones m WHERE m.project_id = p.id AND m.due_date IS NOT NULL AND m.due_date < ? AND m.amount > COALESCE((SELECT SUM(r2.amount) FROM project_receipts r2 WHERE r2.milestone_id = m.id),0) + 0.01) AS overdue
                 FROM projects p ORDER BY p.id DESC", [date('Y-m-d')])->fetchAll();
-            foreach ($rows as &$r) { $r['id'] = (int)$r['id']; $r['contract'] = project_total($r, (float)$r['var']); $r['received'] = (float)$r['rec']; $r['overdue'] = (int)$r['overdue']; unset($r['var'], $r['rec']); }
+            foreach ($rows as &$r) { $r['id'] = (int)$r['id']; $r['contract'] = project_total($r, (float)$r['varsum']); $r['received'] = (float)$r['rec']; $r['overdue'] = (int)$r['overdue']; unset($r['varsum'], $r['rec']); }
             json_out(['projects' => $rows, 'summary' => receivables_summary()]);
         }
         if ($m === 'POST') {
@@ -87,6 +87,7 @@ function projects_route(string $m, array $p, array $user): void
             $qr = q('SELECT * FROM quotes WHERE id = ?', [(int)($d['quote_id'] ?? 0)])->fetch();
             if (!$qr) fail('Quote not found', 404);
             if ($qr['status'] !== 'accepted' || !(int)$qr['is_latest']) fail('Only an accepted (latest) quotation can be converted to a project');
+            if ((float)$qr['total'] <= 0) fail('This quotation has no value to bill');
             if (q('SELECT 1 FROM projects WHERE quote_no = ?', [$qr['quote_no']])->fetch()) fail('A project already exists for this quotation');
             $data = json_decode((string)$qr['data'], true) ?: [];
             $client = json_decode((string)$qr['client_json'], true) ?: [];
@@ -95,10 +96,16 @@ function projects_route(string $m, array $p, array $user): void
             q('INSERT INTO projects (quote_no,name,client_id,division,status,base_value,tax_rate,start_date,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
                 [$qr['quote_no'], $name, $qr['client_id'], $qr['division'], 'active', (float)$qr['total'], (float)($data['tax_rate'] ?? 18), date('Y-m-d'), now()]);
             $pid = (int)db()->lastInsertId();
-            $i = 0;
-            foreach (($data['payment_schedule'] ?? []) as $s) {
+            $i = 0; $left = round((float)$qr['total'], 2);
+            $sched = array_values($data['payment_schedule'] ?? []);
+            $pctSum = array_sum(array_map(fn($s) => num($s['percent'] ?? 0), $sched));
+            foreach ($sched as $k => $s) {
                 $pct = num($s['percent'] ?? 0);
-                q('INSERT INTO project_milestones (project_id,label,percent,amount,sort) VALUES (?,?,?,?,?)', [$pid, str($s['label'] ?? '', 190), $pct, round((float)$qr['total'] * $pct / 100, 2), $i++]);
+                $amt = round((float)$qr['total'] * $pct / 100, 2);
+                // when the stages add up to 100%, the last one absorbs rounding so milestones always equal the contract exactly
+                if ($k === count($sched) - 1 && abs($pctSum - 100) < 0.01) $amt = round($left, 2);
+                $left -= $amt;
+                q('INSERT INTO project_milestones (project_id,label,percent,amount,sort) VALUES (?,?,?,?,?)', [$pid, str($s['label'] ?? '', 190), $pct, $amt, $i++]);
             }
             db()->commit();
             json_out(['id' => $pid], 201);
@@ -133,11 +140,14 @@ function projects_route(string $m, array $p, array $user): void
         if ($sid !== null && !q('SELECT 1 FROM project_milestones WHERE id = ? AND project_id = ?', [$sid, $id])->fetch()) fail('Milestone not found', 404);
         if ($m === 'PUT' && $sid !== null) {
             $d = body();
+            $cur = q('SELECT label, amount, invoice_no FROM project_milestones WHERE id = ?', [$sid])->fetch();
+            if ($cur['invoice_no'] && (abs((float)$cur['amount'] - round(num($d['amount'] ?? 0), 2)) > 0.001 || trim((string)$cur['label']) !== str($d['label'] ?? '', 190))) fail('This milestone has been invoiced, so its stage name and amount can no longer change (only the due date).', 409);
             q('UPDATE project_milestones SET label=?, due_date=?, amount=? WHERE id=?', [str($d['label'] ?? '', 190) ?: 'Milestone', pdate($d['due_date'] ?? null), round(max(num($d['amount'] ?? 0), 0), 2), $sid]);
             json_out(['ok' => true]);
         }
         if ($m === 'DELETE' && $sid !== null) {
             if (q('SELECT 1 FROM project_receipts WHERE milestone_id = ?', [$sid])->fetch()) fail('Delete the receipts against this milestone first');
+            if (q('SELECT 1 FROM project_milestones WHERE id = ? AND invoice_no IS NOT NULL', [$sid])->fetch()) fail('An invoiced milestone cannot be deleted (it would leave a gap in your invoice numbers).', 409);
             q('DELETE FROM project_milestones WHERE id = ?', [$sid]);
             json_out(['ok' => true]);
         }
@@ -158,6 +168,14 @@ function projects_route(string $m, array $p, array $user): void
             if ($amt <= 0) fail('Enter the amount received');
             $mid = (int)($d['milestone_id'] ?? 0) ?: null;
             if ($mid && !q('SELECT 1 FROM project_milestones WHERE id = ? AND project_id = ?', [$mid, $id])->fetch()) $mid = null;
+            if ($mid) {
+                $ms = q('SELECT amount, (SELECT COALESCE(SUM(r.amount),0) FROM project_receipts r WHERE r.milestone_id = project_milestones.id) AS paid FROM project_milestones WHERE id = ?', [$mid])->fetch();
+                $bal = round((float)$ms['amount'] - (float)$ms['paid'], 2);
+                if ($amt > $bal + 0.01) fail('That is more than the balance due on this milestone (' . number_format($bal, 2) . ').');
+            } else {
+                $det = project_detail($id);
+                if ($amt > $det['totals']['outstanding'] + 0.01) fail('That is more than the total outstanding on this project (' . number_format($det['totals']['outstanding'], 2) . ').');
+            }
             q('INSERT INTO project_receipts (project_id,milestone_id,amount,received_on,mode,reference,note,created_at) VALUES (?,?,?,?,?,?,?,?)',
                 [$id, $mid, $amt, pdate($d['received_on'] ?? null) ?: date('Y-m-d'), str($d['mode'] ?? '', 30), str($d['reference'] ?? '', 120), str($d['note'] ?? '', 255), now()]);
             json_out(['id' => (int)db()->lastInsertId()], 201);
@@ -181,6 +199,7 @@ function projects_route(string $m, array $p, array $user): void
             $pr = q('SELECT tax_rate FROM projects WHERE id = ?', [$id])->fetch();
             $amt = round(num($d['amount'] ?? $v['amount']), 2);
             $mid = $v['milestone_id'] !== null ? (int)$v['milestone_id'] : null;
+            if ($mid && abs($amt - (float)$v['amount']) > 0.001 && q('SELECT 1 FROM project_milestones WHERE id = ? AND invoice_no IS NOT NULL', [$mid])->fetch()) fail('This variation has been invoiced - its amount can no longer change.', 409);
             db()->beginTransaction();
             if ($new === 'approved' && !$mid) {
                 q('INSERT INTO project_milestones (project_id,label,percent,amount,kind,sort) VALUES (?,?,?,?,?,?)', [$id, 'Variation: ' . str($d['title'] ?? $v['title'], 160), 0, round($amt * (1 + (float)$pr['tax_rate'] / 100), 2), 'variation', 1000]);

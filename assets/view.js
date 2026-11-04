@@ -16,7 +16,7 @@ async function pub(act, body) {
 async function boot() {
   try {
     const r = await pub('quote');
-    Q = r.quote; normalizeQuote(); S.settings = r.settings; PUB.resp = r.response; PUB.expired = r.expired;
+    Q = r.quote; normalizeQuote(); S.settings = r.settings; PUB.resp = r.response; PUB.expired = r.expired; PUB.available = r.available !== false;
     document.title = `Quotation ${Q.quote_no} - ${r.settings.company_name || ''}`;
     draw();
   } catch (e) {
@@ -25,7 +25,11 @@ async function boot() {
 }
 
 function draw() {
-  const d = Q.data, s = S.settings, open = Q.status === 'sent' || Q.status === 'draft';
+  if (!PUB.available) {
+    $('#app').innerHTML = `<div class="login"><img class="logo" src="assets/logo.png" alt=""><h1>Quotation being updated</h1><p class="muted">${esc(S.settings.company_name || 'We')} is preparing a revised version of quotation ${esc(Q.quote_no)}. Please check back shortly or contact us${S.settings.company_phone ? ' on ' + esc(S.settings.company_phone) : ''}.</p></div>`;
+    return;
+  }
+  const d = Q.data, s = S.settings, open = Q.status === 'sent';
   const canAct = open && !PUB.expired;
   let top = '';
   if (Q.status === 'accepted') top = `<div class="banner" style="margin:0 0 14px"><b>✓ Accepted</b>${PUB.resp ? ` by ${esc(PUB.resp.name)} on ${esc((PUB.resp.at || '').slice(0, 10))}` : ''}. Thank you - our team will be in touch shortly.</div>`;
@@ -57,9 +61,9 @@ function wireAct() {
     if (action === 'accept' && !name) { toast('Please type your full name', 'err'); return; }
     if (action === 'reject' && !confirmBox('Decline this quotation?')) return;
     try {
-      await pub('respond', { action, name, note: $('#ac').value, option: Q.data.selected_option, signature: PUB.signed && action === 'accept' ? cv.toDataURL('image/png') : '' });
+      await pub('respond', { action, name, note: $('#ac').value, option: Q.data.selected_option, expected_total: totals(Q.data).total, signature: PUB.signed && action === 'accept' ? cv.toDataURL('image/png') : '' });
       toast(action === 'accept' ? 'Quotation accepted - thank you!' : 'Response sent', 'ok'); boot(); window.scrollTo(0, 0);
-    } catch (e) { toast(e.message, 'err'); }
+    } catch (e) { toast(e.message, 'err'); if (/updated while|reload/i.test(e.message)) setTimeout(boot, 2500); }
   };
   $('#aok').onclick = () => send('accept');
   $('#ano').onclick = () => send('reject');

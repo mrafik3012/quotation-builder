@@ -60,7 +60,7 @@ function totals(d) {
   let sub = 0;
   effSections(d).forEach(s => s.items.forEach(it => { sub += r2(n(it.qty) * n(it.rate)); }));
   let disc = d.discount.type === 'flat' ? n(d.discount.value) : sub * n(d.discount.value) / 100;
-  disc = Math.min(Math.max(disc, 0), sub);
+  disc = r2(Math.min(Math.max(disc, 0), sub));
   const taxable = sub - disc, tax = r2(taxable * n(d.tax_rate) / 100);
   let total = taxable + tax, ro = 0;
   if (d.round_off) { const r = Math.round(total); ro = r2(r - total); total = r; }
@@ -75,27 +75,28 @@ function pmcFee() {
 
 /* ---------- rendering ---------- */
 function drawEditor() {
-  const ro = Q.status === 'superseded', isNew = !Q.id, v = $('#view');
+  const sup = Q.status === 'superseded', acc = Q.status === 'accepted', ro = sup || acc, isNew = !Q.id, v = $('#view');
   v.innerHTML = `
   <datalist id="units">${UNITS.map(u => `<option value="${u}">`).join('')}</datalist>
   <div class="page-head noprint"><h1>${isNew ? 'New ' + esc(DIVS[Q.division]) + ' quote' : esc(Q.quote_no) + (Q.rev ? ` <span class="muted">· Rev ${Q.rev}</span>` : '')}</h1>
    ${divChip(Q.division)} ${isNew ? '' : statusChip(Q.status)}</div>
   <div class="row noprint" style="margin-bottom:14px">
    ${ro ? '' : '<button class="btn pri" data-act="save">Save</button>'}
-   ${isNew || ro ? '' : '<button class="btn pri" data-act="share">Share with client</button>'}
+   ${isNew || sup ? '' : '<button class="btn pri" data-act="share">' + (acc ? 'Client link' : 'Share with client') + '</button>'}
    ${Q.status === 'accepted' && Q.id ? (Q.project ? `<a class="btn pri" href="#/projects/${Q.project}">Open project</a>` : '<button class="btn pri" data-act="toproject">Convert to project</button>') : ''}
    ${Q.division === 'roofing' && !ro ? '<button class="btn" data-act="roofcalc">Roofing calculator</button>' : ''}
    ${isNew ? '' : `<a class="btn" href="#/quotes/${Q.id}/print">Preview / PDF</a>`}
-   ${isNew || ro ? '' : `<select id="stsel" style="width:auto"><option disabled>Status…</option>${['draft', 'sent', 'accepted', 'rejected'].map(k => `<option value="${k}" ${Q.status === k ? 'selected' : ''}>${STATUS_LABEL[k]}</option>`).join('')}</select>`}
+   ${isNew || sup || (acc && S.user.role !== 'admin') ? '' : `<select id="stsel" style="width:auto"><option disabled>Status…</option>${['draft', 'sent', 'accepted', 'rejected'].map(k => `<option value="${k}" ${Q.status === k ? 'selected' : ''}>${STATUS_LABEL[k]}</option>`).join('')}</select>`}
    <span class="sp"></span>
-   ${isNew || ro ? '' : '<button class="btn" data-act="revise">New revision</button>'}
+   ${isNew || sup || Q.project ? '' : '<button class="btn" data-act="revise">New revision</button>'}
    ${Q.division === 'interior' && !ro ? '<button class="btn" data-act="rooms">+ Add rooms</button>' : ''}
    ${isNew ? '' : '<button class="btn" data-act="csv">Export lines (CSV)</button>'}
    ${ro ? '' : '<button class="btn" data-act="savetpl" title="Reuse these sections on future quotes">Save as template</button>'}
    ${isNew ? '' : '<button class="btn" data-act="dup">Duplicate</button>'}
    ${isNew || Q.status !== 'draft' ? '' : '<button class="btn dng" data-act="del">Delete</button>'}
   </div>
-  ${ro ? `<div class="banner">This is Rev ${Q.rev}, which has been superseded and is read-only. <a href="#" data-act="latest">Open the latest revision</a>.</div>` : ''}
+  ${acc ? `<div class="banner"><b>Accepted - locked.</b> The client has accepted this quotation, so it can no longer be edited.${Q.project ? ' Record changes as variation orders in the project.' : ' To change it, create a <b>New revision</b>' + (S.user.role === 'admin' ? ' or re-open it using the Status menu.' : ' (an admin can also re-open it).')}</div>` : ''}
+  ${sup ? `<div class="banner">This is Rev ${Q.rev}, which has been superseded and is read-only. <a href="#" data-act="latest">Open the latest revision</a>.</div>` : ''}
   <fieldset ${ro ? 'disabled' : ''}>
   ${isNew ? tplBar() : ''}
   <div class="grid2">
@@ -146,7 +147,7 @@ function waLink(phone, text) {
   return `https://wa.me/${d}?text=${encodeURIComponent(text)}`;
 }
 async function shareQuote() {
-  await ensureSaved();
+  if (Q.status !== 'accepted') await ensureSaved();
   const r = await api(`quotes/${Q.id}/share`, 'POST'); Q.share = r.token; if (Q.status === 'draft') Q.status = 'sent';
   const url = shareUrl(r.token), s = S.settings, c = Q.client;
   const msg = `Hello ${c.contact_person || c.name || ''},\nPlease find your quotation ${Q.quote_no}${Q.title ? ' for ' + Q.title : ''} from ${s.company_name}.\nView, choose your option and accept online: ${url}\nValid until ${fdate(Q.valid_until)}.`;
@@ -154,12 +155,13 @@ async function shareQuote() {
   <p class="muted small" style="margin-top:0">Anyone with this private link can view the quotation, pick an option and accept or decline it. Status is set to <b>Sent</b>.</p>
   <label class="f"><span>Client link</span><input id="shl" readonly value="${esc(url)}"></label>
   <label class="f"><span>Message</span><textarea id="shm" rows="5">${esc(msg)}</textarea></label>
-  <div class="row"><button class="btn" id="shc">Copy link</button><a class="btn pri" id="shw" target="_blank" rel="noopener">Send on WhatsApp</a><a class="btn" id="she">Email</a><span class="sp"></span><button class="btn" id="shx">Close</button></div>
+  <div class="row"><button class="btn" id="shc">Copy link</button><a class="btn pri" id="shw" target="_blank" rel="noopener">Send on WhatsApp</a><a class="btn" id="she">Email</a><span class="sp"></span><button class="btn dng" id="shr" title="Stops the link working immediately">Revoke link</button><button class="btn" id="shx">Close</button></div>
   ${c.phone ? '' : '<p class="muted small" style="margin:10px 0 0">No client phone saved - WhatsApp will ask you to pick a contact.</p>'}`);
   const upd = () => { const t = $('#shm', m.el).value; $('#shw', m.el).href = waLink(c.phone, t); $('#she', m.el).href = `mailto:${encodeURIComponent(c.email || '')}?subject=${encodeURIComponent('Quotation ' + Q.quote_no + ' - ' + s.company_name)}&body=${encodeURIComponent(t)}`; };
   upd(); $('#shm', m.el).oninput = upd;
   $('#shc', m.el).onclick = async () => { try { await navigator.clipboard.writeText(url); } catch (e) { $('#shl', m.el).select(); document.execCommand('copy'); } toast('Link copied', 'ok'); };
   $('#shx', m.el).onclick = () => { m.close(); pageEditor(Q.id); };
+  $('#shr', m.el).onclick = () => { if (confirmBox('Revoke this link? The client will no longer be able to open it. You can create a new link any time.')) guard(async () => { await api(`quotes/${Q.id}/share`, 'DELETE'); toast('Link revoked', 'ok'); m.close(); pageEditor(Q.id); }); };
 }
 function activityHtml() {
   if (!Q.id || !Q.events || !Q.events.length) return '';
