@@ -23,9 +23,11 @@ try {
     route($method, $a, $b, $c);
 } catch (PDOException $e) {
     error_log('DB error: ' . $e->getMessage());
+    app_log_error('DB error: ' . $e->getMessage());
     fail('Database error', 500);
 } catch (Throwable $e) {
     error_log('Error: ' . $e->getMessage());
+    app_log_error('Error: ' . $e->getMessage());
     fail('Server error', 500);
 }
 
@@ -279,6 +281,22 @@ function route(string $m, string $a, ?string $b, ?string $c): void
                 q('UPDATE api_tokens SET revoked = 1 WHERE id = ?', [(int)$b]);
                 audit($user, 'token.revoke', '#' . (int)$b);
                 json_out(['ok' => true]);
+            }
+            break;
+
+        case 'system': // health, backups and cron details for the admin Settings card
+            require_admin();
+            if ($m === 'GET' && $b === null) {
+                $files = backup_files();
+                $cronPath = __DIR__ . '/cron.php';
+                json_out(['schema' => (int)get_setting('schema_v'), 'php' => PHP_VERSION, 'driver' => config()['driver'] ?? 'mysql', 'mail_configured' => mail_configured(), 'cron_last_run' => get_setting('cron_last_run') ?: null,
+                    'cron_key' => get_setting('cron_key'), 'cron_cmd' => '/usr/bin/php ' . $cronPath, 'cron_url' => app_base_url() . '/api/cron.php?key=' . get_setting('cron_key'), 'health_url' => app_base_url() . '/api/health.php',
+                    'backups' => $files, 'errors_24h' => count(app_errors_since(86400)), 'recent_errors' => array_slice(array_reverse(app_errors_since(86400)), 0, 8), 'disk_free_mb' => (int)(@disk_free_space(__DIR__) / 1048576), 'users' => (int)q('SELECT COUNT(*) AS n FROM users')->fetch()['n'],
+                    'db_quotes' => (int)q('SELECT COUNT(*) AS n FROM quotes')->fetch()['n']]);
+            }
+            if ($m === 'POST' && $b === 'backup') { [$n, $bytes] = backup_to_disk(); audit($user, 'backup.manual', $n); json_out(['file' => $n, 'bytes' => $bytes]); }
+            if ($m === 'GET' && $b === 'backup' && $c !== null && preg_match('/^backup-\d{8}-\d{6}(-[a-f0-9]{16})?\.json\.gz$/', $c) && is_file(data_dir() . '/backups/' . $c)) {
+                header('Content-Type: application/gzip'); header('Content-Disposition: attachment; filename="' . $c . '"'); readfile(data_dir() . '/backups/' . $c); exit;
             }
             break;
 
@@ -553,12 +571,9 @@ function quotes_route(string $m, ?string $b, ?string $c, array $user): void
 
 function backup_download(): void
 {
-    $out = ['exported_at' => now(), 'schema_v' => get_setting('schema_v')];
-    foreach (['settings', 'clients', 'rate_items', 'quotes', 'quote_templates', 'quote_shares', 'quote_events', 'projects', 'project_milestones', 'project_receipts', 'project_variations', 'project_log', 'audit_log'] as $t) $out[$t] = q("SELECT * FROM $t")->fetchAll();
-    $out['users'] = q('SELECT id,name,email,role,created_at FROM users')->fetchAll();
     header('Content-Type: application/json; charset=utf-8');
     header('Content-Disposition: attachment; filename="infraura-backup-' . date('Y-m-d') . '.json"');
-    echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+    echo json_encode(backup_data(), JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR);
     exit;
 }
 

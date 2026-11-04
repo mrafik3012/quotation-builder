@@ -1,5 +1,5 @@
 # Block direct web access to internal PHP files and data. index.php stays public.
-<FilesMatch "^(config|lib|setup|migrate|projects|core|seed_extended)\.php$">
+<FilesMatch "^(config|lib|setup|migrate|projects|core|mail|auth|seed_extended)\.php$">
     Require all denied
 </FilesMatch>
 

@@ -449,7 +449,7 @@ async function pageSettings() {
   ${admin ? '<div class="card" id="aicard"><span class="muted small">Loading…</span></div>' : ''}
   <div class="card"><h3>Quote templates</h3>${(S.templates || []).length ? `<table class="tbl"><tbody>${S.templates.map(t => `<tr><td><b>${esc(t.name)}</b></td><td>${divChip(t.division)}</td><td class="r">${admin ? `<button class="btn sm dng" data-act="deltpl" data-id="${t.id}">Delete</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted small" style="margin:0">No templates yet. Open any quote and click “Save as template”.</p>'}</div>
   <div class="card" id="seccard"></div>
-  ${admin ? '<div class="card" id="mailcard"></div><div class="card" id="teamcard"></div>' : ''}`;
+  ${admin ? '<div class="card" id="mailcard"></div><div class="card" id="syscard"></div><div class="card" id="teamcard"></div>' : ''}`;
   const v = $('#view');
   let logo = s.company_logo || '';
   const logoIn = $('#logo');
@@ -472,6 +472,6 @@ async function pageSettings() {
   if (admin) {
     api('audit').then(a => { $('#audit').innerHTML = a.length ? `<div class="small" style="max-height:220px;overflow:auto">${a.map(x => `<div class="row" style="margin-bottom:3px"><span class="muted nw">${esc(x.created_at.slice(0, 16))}</span><span class="nw">${esc(x.user_name)}</span><span><b>${esc(x.action)}</b> ${esc(x.detail)}</span></div>`).join('')}</div>` : '<span class="muted small">No activity recorded yet.</span>'; }).catch(() => {});
     renderAiCard().catch(() => { $('#aicard').innerHTML = '<span class="muted small">AI settings unavailable.</span>'; });
-    renderMailCard(); renderTeam();
+    renderMailCard(); renderTeam(); renderSystemCard().catch(() => {});
   }
 }

@@ -94,8 +94,10 @@ try {
     fail('Not found', 404);
 } catch (PDOException $e) {
     error_log('DB error: ' . $e->getMessage());
+    app_log_error('DB error: ' . $e->getMessage());
     fail('Database error', 500);
 } catch (Throwable $e) {
     error_log('Error: ' . $e->getMessage());
+    app_log_error('Error: ' . $e->getMessage());
     fail('Server error', 500);
 }

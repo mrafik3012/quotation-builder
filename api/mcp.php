@@ -86,6 +86,7 @@ try {
     rpc_error(null, -32603, $e->getMessage(), $e->getCode() >= 400 && $e->getCode() < 600 ? $e->getCode() : 500);
 } catch (Throwable $e) {
     error_log('MCP error: ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+    app_log_error('MCP error: ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
     rpc_error(null, -32603, 'Internal server error', 500);
 }
 

@@ -248,3 +248,35 @@ function set_setting(string $k, string $v): void
         q('INSERT INTO settings (k, v) VALUES (?, ?)', [$k, $v]);
     }
 }
+
+/** Directory for runtime files (backups, error log). Created on demand and closed to the web. */
+function data_dir(): string
+{
+    $d = __DIR__ . '/data';
+    if (!is_dir($d)) @mkdir($d, 0750, true);
+    if (is_dir($d) && !is_file($d . '/.htaccess')) @file_put_contents($d . '/.htaccess', "Require all denied\n");
+    return $d;
+}
+
+/** Append to api/data/app-errors.log (rotated at 1 MB). Never throws. */
+function app_log_error(string $msg): void
+{
+    try {
+        $f = data_dir() . '/app-errors.log';
+        if (is_file($f) && filesize($f) > 1048576) @rename($f, $f . '.1');
+        @file_put_contents($f, '[' . date('Y-m-d H:i:s') . '] ' . preg_replace('/\s+/', ' ', mb_substr($msg, 0, 600)) . "\n", FILE_APPEND | LOCK_EX);
+    } catch (Throwable $e) { /* logging must never break a request */ }
+}
+
+/** Recent error-log lines newer than $seconds (tail of the file only). */
+function app_errors_since(int $seconds): array
+{
+    $f = data_dir() . '/app-errors.log';
+    if (!is_file($f)) return [];
+    $size = filesize($f); $fp = @fopen($f, 'r'); if (!$fp) return [];
+    if ($size > 262144) fseek($fp, -262144, SEEK_END);
+    $txt = stream_get_contents($fp); fclose($fp);
+    $cut = time() - $seconds; $out = [];
+    foreach (explode("\n", $txt) as $line) if (preg_match('/^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\] (.*)$/', $line, $m) && strtotime($m[1]) >= $cut) $out[] = ['at' => $m[1], 'msg' => $m[2]];
+    return $out;
+}

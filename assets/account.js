@@ -86,3 +86,29 @@ function emailQuoteDialog() {
     catch (e) { btn.disabled = false; throw e; }
   });
 }
+
+/* ---- Settings -> System health, backups and scheduled jobs ---- */
+async function renderSystemCard() {
+  const box = $('#syscard'); if (!box) return;
+  const s = await api('system');
+  const age = s.backups.length ? Math.round((Date.now() - new Date(s.backups[0].at.replace(' ', 'T'))) / 36e5) : null;
+  const cronAge = s.cron_last_run ? Math.round((Date.now() - new Date(s.cron_last_run.replace(' ', 'T'))) / 36e5) : null;
+  const dot = (good, warn) => `<span class="chip ${good ? 'accepted' : warn ? 'sent' : 'rejected'}">${good ? 'OK' : warn ? 'Check' : 'Action needed'}</span>`;
+  box.innerHTML = `<h3>System health, backups &amp; scheduled jobs</h3>
+  <div class="scroll"><table class="tbl"><tbody>
+   <tr><td>Automatic backup</td><td>${s.backups.length ? `last one ${age} h ago` : 'never run'}</td><td class="r">${dot(age !== null && age < 48, age !== null)}</td></tr>
+   <tr><td>Scheduled jobs (cron)</td><td>${s.cron_last_run ? `last ran ${cronAge} h ago (${esc(s.cron_last_run)})` : 'not set up yet - see below'}</td><td class="r">${dot(cronAge !== null && cronAge < 48, cronAge !== null)}</td></tr>
+   <tr><td>E-mail</td><td>${s.mail_configured ? 'configured' : 'not set up - reminders and password resets need it'}</td><td class="r">${dot(s.mail_configured, false)}</td></tr>
+   <tr><td>Errors in the last 24 hours</td><td>${s.errors_24h}${s.recent_errors.length ? `<div class="muted small">${s.recent_errors.map(e => esc(e.at.slice(11, 16) + ' ' + e.msg.slice(0, 110))).join('<br>')}</div>` : ''}</td><td class="r">${dot(s.errors_24h === 0, s.errors_24h < 5)}</td></tr>
+   <tr><td>Server</td><td>PHP ${esc(s.php)} · ${esc(s.driver)} · schema v${s.schema} · ${s.db_quotes} quotes · ${s.disk_free_mb} MB free</td><td></td></tr></tbody></table></div>
+  <div class="row" style="margin:12px 0"><button class="btn pri" id="bknow" type="button">Back up now</button><span class="muted small">Backups are kept on the server (api/data/backups, private) - download a copy occasionally and keep it off the server.</span></div>
+  ${s.backups.length ? `<div class="small" style="max-height:140px;overflow:auto;margin-bottom:12px">${s.backups.slice(0, 10).map(b => `<div class="row" style="margin-bottom:3px"><span class="muted nw">${esc(b.at.slice(0, 16))}</span><a href="api/index.php?r=system/backup/${esc(b.name)}">${esc(b.name)}</a><span class="muted">${Math.round(b.bytes / 1024)} KB</span></div>`).join('')}</div>` : ''}
+  <details><summary class="small" style="cursor:pointer"><b>Set up the daily scheduled job (backups, reminders, daily summary e-mail)</b></summary>
+   <p class="small">In Hostinger hPanel open <b>Advanced → Cron Jobs</b>, choose <b>once per day</b> (e.g. 7:30 am) and use this command:</p><pre class="snip">${esc(s.cron_cmd)}</pre><button class="btn sm" data-cp="${esc(s.cron_cmd)}" type="button">Copy command</button>
+   <p class="small">If your host cannot run PHP commands, use any web scheduler to open this address daily:</p><pre class="snip">${esc(s.cron_url)}</pre><button class="btn sm" data-cp="${esc(s.cron_url)}" type="button">Copy address</button></details>
+  <details style="margin-top:8px"><summary class="small" style="cursor:pointer"><b>Uptime monitoring</b></summary><p class="small">Point a free monitor (UptimeRobot, Better Stack…) at this address - it answers 200 when the app and database are healthy:</p><pre class="snip">${esc(s.health_url)}</pre><button class="btn sm" data-cp="${esc(s.health_url)}" type="button">Copy address</button></details>`;
+  box.onclick = e => {
+    const cp = e.target.closest('[data-cp]'); if (cp) return copyText(cp.dataset.cp);
+    if (e.target.id === 'bknow') guard(async () => { e.target.disabled = true; const r = await api('system/backup', 'POST'); toast('Backup saved: ' + r.file, 'ok'); renderSystemCard(); });
+  };
+}

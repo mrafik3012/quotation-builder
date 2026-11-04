@@ -37,7 +37,7 @@ function do_install(array $in): string
         $dir = __DIR__ . '/api/data';
         if (!is_dir($dir)) mkdir($dir, 0750, true);
         file_put_contents($dir . '/.htaccess', "Require all denied\n");
-        $cfg = ['driver' => 'sqlite', 'sqlite_path' => $dir . '/app.sqlite'];
+        $cfg = ['driver' => 'sqlite', 'sqlite_path' => $dir . '/app-' . bin2hex(random_bytes(6)) . '.sqlite'];   // unguessable name: defence in depth if .htaccess is ignored
         if (is_file($cfg['sqlite_path'])) unlink($cfg['sqlite_path']);
         $pdo = new PDO('sqlite:' . $cfg['sqlite_path'], null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
     } else {

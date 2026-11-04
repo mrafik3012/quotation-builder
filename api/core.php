@@ -441,3 +441,36 @@ function ensure_share_token(array $row, array $user): string
     if (!$ex) q('INSERT INTO quote_shares (quote_no,token,created_at) VALUES (?,?,?)', [$row['quote_no'], $tok, now()]);
     return $tok;
 }
+
+/** All business data as an array (users without password hashes / secrets). Used by the download and the nightly backup. */
+function backup_data(): array
+{
+    $out = ['exported_at' => now(), 'schema_v' => get_setting('schema_v'), 'app' => 'infraura-quotation-builder'];
+    foreach (['settings', 'clients', 'rate_items', 'quotes', 'quote_templates', 'quote_shares', 'quote_events', 'projects', 'project_milestones', 'project_receipts', 'project_variations', 'project_log', 'invoice_history', 'credit_notes', 'audit_log'] as $t) {
+        try { $out[$t] = q("SELECT * FROM $t")->fetchAll(); } catch (Throwable $e) { $out[$t] = []; }
+    }
+    foreach ($out['settings'] as &$s) if (in_array($s['k'], ['smtp_pass', 'cron_key'], true)) $s['v'] = '';   // secrets are never written to backup files
+    $out['users'] = q('SELECT id,name,email,role,created_at FROM users')->fetchAll();
+    return $out;
+}
+
+/** Write a compressed backup file to api/data/backups and prune old ones. Returns [filename, bytes]. */
+function backup_to_disk(): array
+{
+    $dir = data_dir() . '/backups';
+    if (!is_dir($dir)) @mkdir($dir, 0750, true);
+    if (!is_file($dir . '/.htaccess')) @file_put_contents($dir . '/.htaccess', "Require all denied\n");
+    $name = 'backup-' . date('Ymd-His') . '-' . bin2hex(random_bytes(8)) . '.json.gz';   // unguessable even if the web server ignored .htaccess
+    $bytes = file_put_contents($dir . '/' . $name, gzencode(json_encode(backup_data(), JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR), 6));
+    if ($bytes === false) throw new RuntimeException('Could not write the backup file (is api/data writable?)');
+    $keep = max(1, (int)(get_setting('backup_keep') ?: 14));
+    $files = glob($dir . '/backup-*.json.gz') ?: []; sort($files);
+    foreach (array_slice($files, 0, max(0, count($files) - $keep)) as $old) @unlink($old);
+    return [$name, $bytes];
+}
+
+function backup_files(): array
+{
+    $files = glob(data_dir() . '/backups/backup-*.json.gz') ?: []; rsort($files);
+    return array_map(fn($f) => ['name' => basename($f), 'bytes' => filesize($f), 'at' => date('Y-m-d H:i:s', filemtime($f))], array_slice($files, 0, 30));
+}
