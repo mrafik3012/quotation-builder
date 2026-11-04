@@ -291,16 +291,16 @@ function create_quote(array $user, array $in): array
 
 // ---------------- roofing calculator (server-side port of assets/roof.js; parity-tested) ----------------
 const ROOF_MATS = [
-    'gi'      => ['label' => 'GI colour coated (PPGI) 0.40 mm', 'match' => 'GI colour coated sheet 0.40', 'def' => 88],
-    'gi55'    => ['label' => 'GI colour coated (PPGI) 0.55 mm', 'match' => 'GI colour coated sheet 0.55', 'def' => 118],
-    'galv'    => ['label' => 'Galvalume 0.45 mm', 'match' => 'Galvalume (Zn-Al) sheet 0.45', 'def' => 100],
-    'upvc'    => ['label' => 'UPVC trapezoidal 2.5 mm', 'match' => 'UPVC trapezoidal roofing sheet 2.5', 'def' => 140],
-    'upvcasa' => ['label' => 'UPVC ASA tile-profile 3 mm', 'match' => 'UPVC tile-profile (ASA', 'def' => 175],
-    'puf30'   => ['label' => 'PUF sandwich panel 30 mm', 'match' => 'PUF sandwich panel 30 mm', 'def' => 215],
-    'puf50'   => ['label' => 'PUF sandwich panel 50 mm', 'match' => 'PUF sandwich panel 50 mm', 'def' => 270],
-    'puf75'   => ['label' => 'PUF sandwich panel 75 mm', 'match' => 'PUF sandwich panel 75 mm', 'def' => 335],
-    'alu'     => ['label' => 'Aluminium roofing 0.60 mm coated', 'match' => 'Aluminium roofing sheet 0.60', 'def' => 195],
-    'poly'    => ['label' => 'Polycarbonate multiwall 6 mm', 'match' => 'Polycarbonate multiwall sheet 6', 'def' => 150],
+    'gi'      => ['label' => 'GI colour coated (PPGI) 0.40 mm', 'short' => 'GI', 'match' => 'GI colour coated sheet 0.40', 'def' => 88],
+    'gi55'    => ['label' => 'GI colour coated (PPGI) 0.55 mm', 'short' => 'GI 0.55', 'match' => 'GI colour coated sheet 0.55', 'def' => 118],
+    'galv'    => ['label' => 'Galvalume 0.45 mm', 'short' => 'Galvalume', 'match' => 'Galvalume (Zn-Al) sheet 0.45', 'def' => 100],
+    'upvc'    => ['label' => 'UPVC trapezoidal 2.5 mm', 'short' => 'UPVC', 'match' => 'UPVC trapezoidal roofing sheet 2.5', 'def' => 140],
+    'upvcasa' => ['label' => 'UPVC ASA tile-profile 3 mm', 'short' => 'UPVC ASA', 'match' => 'UPVC tile-profile (ASA', 'def' => 175],
+    'puf30'   => ['label' => 'PUF sandwich panel 30 mm', 'short' => 'PUF 30', 'match' => 'PUF sandwich panel 30 mm', 'def' => 215],
+    'puf50'   => ['label' => 'PUF sandwich panel 50 mm', 'short' => 'PUF 50', 'match' => 'PUF sandwich panel 50 mm', 'def' => 270],
+    'puf75'   => ['label' => 'PUF sandwich panel 75 mm', 'short' => 'PUF 75', 'match' => 'PUF sandwich panel 75 mm', 'def' => 335],
+    'alu'     => ['label' => 'Aluminium roofing 0.60 mm coated', 'short' => 'Aluminium', 'match' => 'Aluminium roofing sheet 0.60', 'def' => 195],
+    'poly'    => ['label' => 'Polycarbonate multiwall 6 mm', 'short' => 'Polycarbonate', 'match' => 'Polycarbonate multiwall sheet 6', 'def' => 150],
 ];
 const ROOF_PARTS = [
     'purlin' => ['match' => 'GI / MS purlins (Z / C)', 'def' => 88],
@@ -349,7 +349,7 @@ function roof_geometry(array $p): ?array
     return [
         'plan' => $plan, 'area' => $area, 'billed' => $billed, 'slopeLen' => $slopeLen, 'slopes' => $slopes, 'roofLen' => $roofLen, 'ridge' => $ridge, 'barge' => $barge,
         'gutterRft' => $gut ? $gutterRft : 0, 'pipes' => $pipes, 'pipeRft' => $pipes * max(num($p['height'] ?? 0), 0),
-        'purlinKg' => $purlinRft * num($p['purlinkg'] ?? 0), 'purlinRft' => $purlinRft, 'frameKg' => $plan * num($p['framekg'] ?? 0),
+        'purlinKg' => ($p['structure'] ?? 'yes') === 'no' ? 0 : $purlinRft * num($p['purlinkg'] ?? 0), 'purlinRft' => $purlinRft, 'frameKg' => ($p['structure'] ?? 'yes') === 'no' ? 0 : $plan * num($p['framekg'] ?? 0),
         'screws' => (int)ceil($billed * num($p['screws'] ?? 0)), 'turbo' => $turboEvery > 0 ? max((int)round($plan / $turboEvery), 0) : 0,
         'skyArea' => $area * max(num($p['sky'] ?? 0), 0) / 100,
     ];
@@ -357,8 +357,8 @@ function roof_geometry(array $p): ?array
 
 function roof_defaults(array $in): array
 {
-    $d = ['type' => 'gable', 'len' => 0, 'wid' => 0, 'slope' => 10, 'eave' => 1, 'gable' => 0.5, 'height' => 12, 'waste' => 7, 'pspace' => 4, 'purlinkg' => 1.5, 'framekg' => 2.5, 'screws' => 0.7, 'turbo' => 1000, 'sky' => 0, 'gutter' => 'yes'];
-    foreach ($d as $k => $v) if (array_key_exists($k, $in) && $in[$k] !== '' && $in[$k] !== null) $d[$k] = in_array($k, ['type', 'gutter'], true) ? (string)$in[$k] : num($in[$k]);
+    $d = ['structure' => 'yes', 'type' => 'gable', 'len' => 0, 'wid' => 0, 'slope' => 10, 'eave' => 1, 'gable' => 0.5, 'height' => 12, 'waste' => 7, 'pspace' => 4, 'purlinkg' => 1.5, 'framekg' => 2.5, 'screws' => 0.7, 'turbo' => 1000, 'sky' => 0, 'gutter' => 'yes'];
+    foreach ($d as $k => $v) if (array_key_exists($k, $in) && $in[$k] !== '' && $in[$k] !== null) $d[$k] = in_array($k, ['type', 'gutter', 'structure'], true) ? (string)$in[$k] : num($in[$k]);
     if (!in_array($d['type'], ['gable', 'shed', 'flat'], true)) $d['type'] = 'gable';
     return $d;
 }

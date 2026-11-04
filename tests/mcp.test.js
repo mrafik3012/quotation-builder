@@ -53,7 +53,7 @@ const payload = res => JSON.parse(res.content[0].text);
   let tools;
   await test('tools/list returns well-formed tools with JSON-Schema inputs and annotations', async () => {
     tools = (await rpc(readTok, 'tools/list')).data.result.tools;
-    ok(tools.length >= 14, 'tool count ' + tools.length); eq(new Set(tools.map(t => t.name)).size, tools.length, 'unique names');
+    ok(tools.length >= 15, 'tool count ' + tools.length); eq(new Set(tools.map(t => t.name)).size, tools.length, 'unique names');
     for (const t of tools) { ok(/^[a-z_]+$/.test(t.name), 'name ' + t.name); ok(t.description && t.description.length > 30, 'description ' + t.name); eq(t.inputSchema.type, 'object', 'schema ' + t.name); ok(t.annotations && typeof t.annotations.readOnlyHint === 'boolean', 'annotations ' + t.name); ok(!('run' in t) && !('scope' in t), 'internals leaked ' + t.name); }
   });
   await test('no tool can delete, send, accept, change settings or manage users', async () => {
@@ -133,6 +133,42 @@ const payload = res => JSON.parse(res.content[0].text);
   await test('add_project_log writes a site-log entry', async () => {
     const pid = (await admin('GET', 'projects')).data.projects[0]; if (!pid) return; // no project in a fresh DB: skip silently
     ok(payload(await call(writeTok, 'add_project_log', { project_id: pid.id, text: 'Sheets delivered', progress_percent: 20 })).ok);
+  });
+
+  console.log('\nOne-step roofing quote (the "60x30 GI A-type" request)');
+  let rq;
+  await test('create_roofing_quote: GI, 60x30 ft, A-type -> a complete draft in ONE call, with no client given', async () => {
+    rq = payload(await call(writeTok, 'create_roofing_quote', { length_ft: 60, width_ft: 30, material: 'gi', roof_type: 'gable' }));
+    eq(rq.status, 'draft'); eq(rq.client, 'Client to be confirmed'); ok(rq.warnings.some(w => /client/i.test(w)), 'warns about client'); ok(rq.assumptions.length >= 3, 'states assumptions'); ok(/gable/i.test(rq.roof.type));
+    near(rq.roof.plan_area_sqft, 1800); ok(rq.roof.roof_area_sqft > 1800, 'slope adds area');
+    const calc = payload(await call(readTok, 'calculate_roof', { length_ft: 60, width_ft: 30, materials: ['gi'] })).packages[0];
+    near(rq.totals.subtotal, calc.total_before_gst, 'quote equals the calculator'); near(rq.totals.grand_total, calc.total_incl_gst, 'with GST');
+  });
+  await test('the saved quote is complete: title, scope, lines, payment schedule, terms, HSN, area', async () => {
+    const r = (await admin('GET', `quotes/${rq.quote_id}`)).data.quote;
+    eq(r.status, 'draft'); ok(/60 x 30/.test(r.title) && /A-type/.test(r.title)); ok(/60 x 30 ft/.test(r.data.scope)); ok(r.data.sections.length === 1 && r.data.sections[0].items.length >= 8, 'items');
+    ok(r.data.payment_schedule.length > 0 && r.data.terms.length > 0, 'schedule + terms'); eq(r.data.area_sqft, 1800); ok(r.data.hsn, 'hsn'); near(r.total, rq.totals.grand_total);
+  });
+  await test('the placeholder client is reused, not duplicated, and a named client overrides it', async () => {
+    const again = payload(await call(writeTok, 'create_roofing_quote', { length_ft: 40, width_ft: 20 })); eq(again.client, 'Client to be confirmed');
+    const clients = (await admin('GET', 'clients')).data.filter(c => c.name === 'Client to be confirmed'); eq(clients.length, 1, 'single placeholder client');
+    const named = payload(await call(writeTok, 'create_roofing_quote', { length_ft: 40, width_ft: 20, client: { name: 'Sharma Industries', phone: '9876543210' } })); eq(named.client, 'Sharma Industries'); eq(named.warnings, []);
+  });
+  await test('sheets-only (re-roofing) is cheaper than a new building with frame and says so', async () => {
+    const full = payload(await call(writeTok, 'create_roofing_quote', { length_ft: 60, width_ft: 30, client: { name: 'Frame Test' } })), sheets = payload(await call(writeTok, 'create_roofing_quote', { length_ft: 60, width_ft: 30, include_structure: false, client: { name: 'Frame Test' } }));
+    ok(sheets.totals.grand_total < full.totals.grand_total * 0.6, 'much cheaper without the frame'); ok(sheets.assumptions.some(x => /NO steel frame/.test(x)));
+    const q = (await admin('GET', `quotes/${sheets.quote_id}`)).data.quote; ok(!q.data.sections[0].items.some(i => /frame|purlin/i.test(i.desc)), 'no frame/purlin lines');
+  });
+  await test('several materials become selectable options on ONE quote (GI / UPVC / PUF)', async () => {
+    const m = payload(await call(writeTok, 'create_roofing_quote', { length_ft: 60, width_ft: 30, materials: ['gi', 'upvc', 'puf50'], client: { name: 'Options Co' } }));
+    eq(m.options.map(o => o.option), ['GI', 'UPVC', 'PUF 50']); ok(m.options[0].grand_total_incl_gst < m.options[1].grand_total_incl_gst && m.options[1].grand_total_incl_gst < m.options[2].grand_total_incl_gst, 'GI < UPVC < PUF');
+    const q = (await admin('GET', `quotes/${m.quote_id}`)).data.quote; eq(q.data.options.length, 3); eq(q.data.selected_option, 0); near(q.total, m.options[0].grand_total_incl_gst);
+    const sh = (await admin('POST', `quotes/${m.quote_id}/share`)).data.token; const pub = await (await fetch(`${BASE}/api/public.php?r=quote&t=${sh}`)).json(); eq(pub.quote.data.options.length, 3, 'client sees the options');
+  });
+  await test('create_roofing_quote validates input and is write-only', async () => {
+    ok((await call(writeTok, 'create_roofing_quote', { length_ft: 0, width_ft: 30 })).isError); ok((await call(writeTok, 'create_roofing_quote', { length_ft: 10, width_ft: 10, material: 'gold' })).isError);
+    ok((await call(writeTok, 'create_roofing_quote', { length_ft: 10, width_ft: 10, roof_type: 'dome' })).isError); ok((await call(writeTok, 'create_roofing_quote', { length_ft: 10, width_ft: 10, materials: ['gi', 'upvc', 'puf50', 'alu', 'poly'] })).isError);
+    const r = await call(readTok, 'create_roofing_quote', { length_ft: 60, width_ft: 30 }); ok(r.isError && /read-only/.test(r.content[0].text));
   });
 
   console.log('\nToken management');
