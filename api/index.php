@@ -246,15 +246,10 @@ function quote_row_out(array $r, bool $full): array
     return $r;
 }
 
-function clean_quote_input(array $d, ?string $existingDivision = null): array
+function clean_sections($in): array
 {
-    $division = $existingDivision ?? (string)($d['division'] ?? '');
-    if (!isset(DIVISIONS[$division])) fail('Invalid division');
-    $title = str($d['title'] ?? '', 255);
-    $data = $d['data'] ?? [];
-    if (!is_array($data)) fail('Invalid quote data');
     $secs = [];
-    foreach (($data['sections'] ?? []) as $s) {
+    foreach ((is_array($in) ? $in : []) as $s) {
         if (!is_array($s)) continue;
         $items = [];
         foreach (($s['items'] ?? []) as $it) {
@@ -266,6 +261,24 @@ function clean_quote_input(array $d, ?string $existingDivision = null): array
         }
         $secs[] = ['title' => str($s['title'] ?? '', 190), 'items' => $items];
     }
+    return $secs;
+}
+
+function clean_quote_input(array $d, ?string $existingDivision = null): array
+{
+    $division = $existingDivision ?? (string)($d['division'] ?? '');
+    if (!isset(DIVISIONS[$division])) fail('Invalid division');
+    $title = str($d['title'] ?? '', 255);
+    $data = $d['data'] ?? [];
+    if (!is_array($data)) fail('Invalid quote data');
+    $secs = clean_sections($data['sections'] ?? []);
+    $opts = [];
+    foreach ((is_array($data['options'] ?? null) ? $data['options'] : []) as $o) {
+        if (!is_array($o) || count($opts) >= 6) continue;
+        $opts[] = ['name' => str($o['name'] ?? '', 120) ?: 'Option', 'note' => str($o['note'] ?? '', 500), 'sections' => clean_sections($o['sections'] ?? [])];
+    }
+    $sel = (int)($data['selected_option'] ?? 0);
+    if ($sel < 0 || $sel >= count($opts)) $sel = 0;
     $pay = [];
     foreach (($data['payment_schedule'] ?? []) as $p) {
         if (is_array($p) && str($p['label'] ?? '') !== '') $pay[] = ['label' => str($p['label'], 190), 'percent' => num($p['percent'] ?? 0)];
@@ -277,6 +290,8 @@ function clean_quote_input(array $d, ?string $existingDivision = null): array
     $disc = is_array($data['discount'] ?? null) ? $data['discount'] : [];
     $clean = [
         'sections' => $secs,
+        'options' => $opts,
+        'selected_option' => $sel,
         'discount' => ['type' => ($disc['type'] ?? 'percent') === 'flat' ? 'flat' : 'percent', 'value' => max(0, num($disc['value'] ?? 0))],
         'tax_rate' => min(max(num($data['tax_rate'] ?? 18), 0), 100),
         'round_off' => !empty($data['round_off']),

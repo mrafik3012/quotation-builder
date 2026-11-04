@@ -118,11 +118,24 @@ function num($v): float
     return is_numeric($v) ? (float)$v : 0.0;
 }
 
+/** Common sections plus the selected optional package (if any). */
+function effective_sections(array $data): array
+{
+    $secs = $data['sections'] ?? [];
+    $opts = $data['options'] ?? [];
+    if (is_array($opts) && $opts) {
+        $i = (int)($data['selected_option'] ?? 0);
+        $o = $opts[$i] ?? $opts[0];
+        $secs = array_merge($secs, $o['sections'] ?? []);
+    }
+    return $secs;
+}
+
 /** Returns [subtotal, discount, tax, round_off, total] */
 function compute_totals(array $data): array
 {
     $sub = 0.0;
-    foreach (($data['sections'] ?? []) as $s) {
+    foreach (effective_sections($data) as $s) {
         foreach (($s['items'] ?? []) as $it) {
             $sub += round(num($it['qty'] ?? 0) * num($it['rate'] ?? 0), 2);
         }

@@ -23,6 +23,8 @@ function normalizeQuote() {
   d.payment_schedule = Array.isArray(d.payment_schedule) ? d.payment_schedule : [];
   d.terms = Array.isArray(d.terms) ? d.terms : [];
   d.notes = d.notes || ''; d.scope = d.scope || ''; d.site_address = d.site_address || ''; d.area_sqft = d.area_sqft || '';
+  d.options = Array.isArray(d.options) ? d.options.map(o => ({ name: o.name || '', note: o.note || '', sections: Array.isArray(o.sections) ? o.sections : [] })) : [];
+  d.selected_option = d.options.length ? Math.min(Math.max(+d.selected_option || 0, 0), d.options.length - 1) : 0;
   d.pmc = d.pmc && typeof d.pmc === 'object' ? d.pmc : { mode: 'percent', base_cost: '', percent: 4, area: '', per_sqft: 60, months: '', monthly_fee: 85000 };
   const c = Q.client && typeof Q.client === 'object' && !Array.isArray(Q.client) ? Q.client : {};
   Q.client = { name: c.name || '', contact_person: c.contact_person || '', phone: c.phone || '', email: c.email || '', address: c.address || '', gstin: c.gstin || '' };
@@ -56,7 +58,7 @@ async function pageEditor(id, div) {
 /* ---------- calculations ---------- */
 function totals(d) {
   let sub = 0;
-  d.sections.forEach(s => s.items.forEach(it => { sub += r2(n(it.qty) * n(it.rate)); }));
+  effSections(d).forEach(s => s.items.forEach(it => { sub += r2(n(it.qty) * n(it.rate)); }));
   let disc = d.discount.type === 'flat' ? n(d.discount.value) : sub * n(d.discount.value) / 100;
   disc = Math.min(Math.max(disc, 0), sub);
   const taxable = sub - disc, tax = r2(taxable * n(d.tax_rate) / 100);
@@ -109,6 +111,7 @@ function drawEditor() {
   <div id="pmcbox"></div>
   <div id="sections"></div>
   <div class="row" style="margin-bottom:16px"><button class="btn" data-act="addsec">+ Add section</button><span class="muted small" id="rsq"></span></div>
+  <div id="optbox"></div>
   <div class="grid2">
    <div class="card"><h3>Summary</h3>
     <div class="grid3"><label class="f"><span>Discount type</span><select data-b="data.discount.type"><option value="percent" ${Q.data.discount.type !== 'flat' ? 'selected' : ''}>Percent %</option><option value="flat" ${Q.data.discount.type === 'flat' ? 'selected' : ''}>Flat ₹</option></select></label>
@@ -123,7 +126,7 @@ function drawEditor() {
   <div class="card"><h3>Notes (printed at the end)</h3><textarea data-b="data.notes" rows="9">${esc(Q.data.notes)}</textarea></div></div>
   </fieldset>
   ${Q.revisions && Q.revisions.length > 1 ? `<div class="card noprint"><h3>Revision history</h3>${Q.revisions.map(r => `<div class="row" style="margin-bottom:4px"><a href="#/quotes/${r.id}">Rev ${r.rev}</a>${statusChip(r.status)}<span class="muted small">${esc(r.updated_at)}</span><span class="sp"></span><b>${inr0(r.total)}</b></div>`).join('')}</div>` : ''}`;
-  drawPmc(); drawSections(); drawPay(); recalc();
+  drawPmc(); drawSections(); drawOptions(); drawPay(); recalc();
   wireEditor();
 }
 
@@ -214,6 +217,7 @@ function wireEditor() {
       if (t.dataset.pmc) updPmc();
       markDirty(); recalc(); return;
     }
+    if (optionsInput(t)) return;
     const sec = t.closest('.sec');
     if (sec && t.dataset.sf) { Q.data.sections[+sec.dataset.s].title = t.value; markDirty(); return; }
     if (sec && t.dataset.f) {
@@ -226,11 +230,13 @@ function wireEditor() {
   v.oninput = onField;
   v.onchange = e => {
     if (e.target.id === 'stsel') return setStatus(e.target.value);
+    if (e.target.dataset.act === 'optsel') return optionsClick('optsel', e.target);
     if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT' || e.target.type === 'radio') onField(e);
   };
   v.onclick = e => {
     const t = e.target.closest('[data-act]'); if (!t) return;
-    const a = t.dataset.act, sec = t.closest('.sec'), si = sec ? +sec.dataset.s : -1;
+    const a = t.dataset.act, sec = t.closest('.sec'), si = sec && sec.dataset.s != null ? +sec.dataset.s : -1;
+    if (a.startsWith('opt')) { if (a !== 'optsel') optionsClick(a, t); return; }
     if (a === 'latest') { e.preventDefault(); const l = Q.revisions.find(r => r.status !== 'superseded') || Q.revisions[0]; if (l) location.hash = '#/quotes/' + l.id; }
     else if (a === 'save') guard(saveQuote);
     else if (a === 'roofcalc') openRoofCalc();
@@ -264,7 +270,7 @@ function applyPmc() {
   markDirty(); drawSections(); toast('PMC fee added to quote', 'ok');
 }
 
-function pickRates(si) {
+function pickRates(si, opt) {
   let div = Q.division, term = '';
   const m = openModal(`<h2>Add from rate card</h2><div class="row"><select id="pd" style="width:auto">${divOptions(div, true).replace('All divisions', 'All divisions')}</select><input id="pq" placeholder="Search items…" style="flex:1" autofocus></div>
   <div class="pick" id="pl"></div><div class="row" style="margin-top:12px"><span class="muted small">Click an item to add it (quantity 1). You can add several, then edit quantities in the quote.</span><span class="sp"></span><button class="btn pri" id="done">Done</button></div>`, true);
@@ -285,7 +291,9 @@ function pickRates(si) {
   $('#pl', m.el).onclick = e => {
     const it = e.target.closest('.it'); if (!it) return;
     const r = S.rates.find(x => x.id == it.dataset.id);
-    Q.data.sections[si].items.push({ desc: r.name, unit: r.unit, qty: 1, rate: r.rate });
+    const row = { desc: r.name, unit: r.unit, qty: 1, rate: r.rate };
+    if (opt) { Q.data.options[opt.oi].sections[opt.si].items.push(row); it.classList.add('added'); markDirty(); drawOptions(); recalc(); return; }
+    Q.data.sections[si].items.push(row);
     it.classList.add('added'); markDirty(); drawSections();
   };
   $('#done', m.el).onclick = m.close;
@@ -333,6 +341,18 @@ async function pagePrint(id) {
     });
     if (multi) body += `<tr class="ss"><td colspan="5" class="num">Sub-total — ${esc(sec.title)}</td><td class="num">${fmt(st)}</td></tr>`;
   });
+  let optHtml = '';
+  if (d.options.length) {
+    const L = i => String.fromCharCode(65 + i);
+    d.options.forEach((op, oi) => {
+      const secs = op.sections.filter(x => x.items.length); if (!secs.length) return;
+      body += `<tr class="st"><td colspan="6">Option ${L(oi)} — ${esc(op.name)}${d.selected_option === oi ? ' (selected)' : ''}${op.note ? ' · <span style="font-weight:400">' + esc(op.note) + '</span>' : ''}</td></tr>`;
+      let ot = 0;
+      secs.forEach(sec => sec.items.forEach((it, ii) => { const a = r2(n(it.qty) * n(it.rate)); ot += a; body += `<tr><td>${L(oi)}.${ii + 1}</td><td>${esc(it.desc).replace(/\n/g, '<br>')}</td><td>${esc(it.unit)}</td><td class="num">${esc(n(it.qty))}</td><td class="num">${fmt(n(it.rate))}</td><td class="num">${fmt(a)}</td></tr>`; }));
+      body += `<tr class="ss"><td colspan="5" class="num">Sub-total — Option ${L(oi)}</td><td class="num">${fmt(ot)}</td></tr>`;
+    });
+    optHtml = `<h4>Choose your option</h4><table class="q"><thead><tr><th>Option</th><th>Highlights</th><th class="num">Package (₹)</th><th class="num">Quote total incl. GST (₹)</th></tr></thead><tbody>${d.options.map((op, oi) => `<tr${d.selected_option === oi ? ' class="st"' : ''}><td>${L(oi)} — ${esc(op.name)}${d.selected_option === oi ? ' ✓' : ''}</td><td>${esc(op.note)}</td><td class="num">${fmt(secSum(op.sections))}</td><td class="num">${fmt(optionTotals(d, oi).total)}</td></tr>`).join('')}</tbody></table>`;
+  }
   const pay = d.payment_schedule.length ? `<h4>Payment schedule</h4><table class="q"><thead><tr><th>Stage</th><th class="num">%</th><th class="num">Amount (₹)</th></tr></thead><tbody>${d.payment_schedule.map(p => `<tr><td>${esc(p.label)}</td><td class="num">${esc(n(p.percent))}%</td><td class="num">${fmt(r2(t.total * n(p.percent) / 100))}</td></tr>`).join('')}</tbody></table>` : '';
   $('#view').innerHTML = `<div class="toolbar noprint"><a class="btn" href="#/quotes/${Q.id}">← Back to editor</a><button class="btn pri" id="pr">Print / Save as PDF</button><span class="muted small">In the print dialog choose “Save as PDF” as the destination. Turn off “Headers and footers” for a clean page.</span></div>
   <div class="doc">
@@ -342,7 +362,8 @@ async function pagePrint(id) {
    <div class="box"><h5>Project</h5><div><b>${esc(Q.title || '—')}</b>${d.site_address ? '\nSite: ' + esc(d.site_address) : ''}${n(d.area_sqft) ? '\nArea: ' + esc(n(d.area_sqft)) + ' sq ft' : ''}</div></div></div>
    ${d.scope ? `<h4>Scope of work</h4><pre>${esc(d.scope)}</pre>` : ''}
    <table class="q" style="margin-top:10px"><thead><tr><th style="width:36px">#</th><th>Description</th><th style="width:48px">Unit</th><th class="num" style="width:56px">Qty</th><th class="num" style="width:84px">Rate (₹)</th><th class="num" style="width:100px">Amount (₹)</th></tr></thead><tbody>${body || '<tr><td colspan="6">No items</td></tr>'}</tbody></table>
-   <div class="sum"><div class="w">${esc(amountWords(t.total))}</div><table><tr><td>Subtotal</td><td>${fmt(t.sub)}</td></tr>${t.disc ? `<tr><td>Discount${d.discount.type === 'percent' ? ' (' + n(d.discount.value) + '%)' : ''}</td><td>− ${fmt(t.disc)}</td></tr><tr><td>Taxable amount</td><td>${fmt(t.taxable)}</td></tr>` : ''}<tr><td>GST @ ${n(d.tax_rate)}%</td><td>${fmt(t.tax)}</td></tr>${d.round_off && t.ro ? `<tr><td>Round off</td><td>${t.ro < 0 ? '− ' : ''}${fmt(Math.abs(t.ro))}</td></tr>` : ''}<tr class="g"><td>Grand total (₹)</td><td>${fmt(t.total)}</td></tr></table></div>
+   <div class="sum"><div class="w">${esc(amountWords(t.total))}</div><table><tr><td>Subtotal</td><td>${fmt(t.sub)}</td></tr>${t.disc ? `<tr><td>Discount${d.discount.type === 'percent' ? ' (' + n(d.discount.value) + '%)' : ''}</td><td>− ${fmt(t.disc)}</td></tr><tr><td>Taxable amount</td><td>${fmt(t.taxable)}</td></tr>` : ''}<tr><td>GST @ ${n(d.tax_rate)}%</td><td>${fmt(t.tax)}</td></tr>${d.round_off && t.ro ? `<tr><td>Round off</td><td>${t.ro < 0 ? '− ' : ''}${fmt(Math.abs(t.ro))}</td></tr>` : ''}<tr class="g"><td>Grand total (₹)${d.options.length ? '<br><span style="font-weight:400;font-size:10px">Option ' + String.fromCharCode(65 + d.selected_option) + ' — ' + esc(d.options[d.selected_option].name) + '</span>' : ''}</td><td>${fmt(t.total)}</td></tr></table></div>
+   ${optHtml}
    ${pay}
    ${d.terms.length ? `<h4>Terms &amp; conditions</h4><ol>${d.terms.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
    ${d.notes ? `<h4>Notes</h4><pre>${esc(d.notes)}</pre>` : ''}
