@@ -2,10 +2,12 @@
 declare(strict_types=1);
 require __DIR__ . '/lib.php';
 require __DIR__ . '/migrate.php';
+require __DIR__ . '/projects.php';
 start_session();
 
 $method = $_SERVER['REQUEST_METHOD'];
 $parts = array_values(array_filter(explode('/', trim((string)($_GET['r'] ?? ''), '/')), 'strlen'));
+$GLOBALS['parts'] = $parts;
 $a = $parts[0] ?? '';
 $b = $parts[1] ?? null;
 $c = $parts[2] ?? null;
@@ -125,6 +127,10 @@ function route(string $m, string $a, ?string $b, ?string $c): void
 
         case 'templates':
             templates_route($m, $b);
+            break;
+
+        case 'projects':
+            projects_route($m, array_slice($GLOBALS['parts'], 1), $user);
             break;
 
         case 'quotes':
@@ -422,7 +428,8 @@ function quotes_route(string $m, ?string $b, ?string $c, array $user): void
         $share = q('SELECT token FROM quote_shares WHERE quote_no = ?', [$row['quote_no']])->fetch();
         $ev = q('SELECT type,detail,actor,created_at,rev FROM quote_events WHERE quote_no = ? ORDER BY id DESC LIMIT 30', [$row['quote_no']])->fetchAll();
         foreach ($ev as &$e) { $d = json_decode((string)$e['detail'], true) ?: []; $e['has_signature'] = !empty($d['signature']); unset($d['signature']); $e['detail'] = $d ?: new stdClass(); }
-        json_out(['quote' => quote_row_out($row, true), 'revisions' => $revs, 'share' => $share ? $share['token'] : null, 'events' => $ev]);
+        json_out(['quote' => quote_row_out($row, true), 'revisions' => $revs, 'share' => $share ? $share['token'] : null, 'events' => $ev,
+            'project' => ($pr = q('SELECT id FROM projects WHERE quote_no = ?', [$row['quote_no']])->fetch()) ? (int)$pr['id'] : null]);
     }
 
     if ($m === 'PUT' && $c === null) {
@@ -509,6 +516,7 @@ function dashboard(): array
         'by_status' => $cast($byStatus), 'by_division' => $cast($byDiv), 'monthly' => $cast($monthly),
         'recent' => array_map(fn($r) => quote_row_out($r + ['subtotal' => 0, 'discount' => 0, 'tax' => 0, 'round_off' => 0], false), $recent),
         'clients' => (int)q('SELECT COUNT(*) AS n FROM clients')->fetch()['n'],
+        'receivables' => receivables_summary(),
         'follow_up' => array_map(fn($r) => quote_row_out($r + ['subtotal' => 0, 'discount' => 0, 'tax' => 0, 'round_off' => 0], false),
             q("SELECT q.id,q.quote_no,q.rev,q.division,q.client_json,q.title,q.status,q.quote_date,q.valid_until,q.total,q.updated_at,
                 (SELECT COUNT(*) FROM quote_events e WHERE e.quote_no = q.quote_no AND e.type = 'view') AS views

@@ -46,7 +46,7 @@ function newQuote(div) {
 async function pageEditor(id, div) {
   if (id) {
     const r = await api('quotes/' + id);
-    Q = r.quote; Q.revisions = r.revisions; Q.share = r.share; Q.events = r.events || []; normalizeQuote();
+    Q = r.quote; Q.revisions = r.revisions; Q.share = r.share; Q.events = r.events || []; Q.project = r.project; normalizeQuote();
   } else {
     if (!DIVS[div]) { location.hash = '#/quotes'; return; }
     newQuote(div);
@@ -83,6 +83,7 @@ function drawEditor() {
   <div class="row noprint" style="margin-bottom:14px">
    ${ro ? '' : '<button class="btn pri" data-act="save">Save</button>'}
    ${isNew || ro ? '' : '<button class="btn pri" data-act="share">Share with client</button>'}
+   ${Q.status === 'accepted' && Q.id ? (Q.project ? `<a class="btn pri" href="#/projects/${Q.project}">Open project</a>` : '<button class="btn pri" data-act="toproject">Convert to project</button>') : ''}
    ${Q.division === 'roofing' && !ro ? '<button class="btn" data-act="roofcalc">Roofing calculator</button>' : ''}
    ${isNew ? '' : `<a class="btn" href="#/quotes/${Q.id}/print">Preview / PDF</a>`}
    ${isNew || ro ? '' : `<select id="stsel" style="width:auto"><option disabled>Status…</option>${['draft', 'sent', 'accepted', 'rejected'].map(k => `<option value="${k}" ${Q.status === k ? 'selected' : ''}>${STATUS_LABEL[k]}</option>`).join('')}</select>`}
@@ -312,6 +313,7 @@ function wireEditor() {
     if (a === 'latest') { e.preventDefault(); const l = Q.revisions.find(r => r.status !== 'superseded') || Q.revisions[0]; if (l) location.hash = '#/quotes/' + l.id; }
     else if (a === 'save') guard(saveQuote);
     else if (a === 'share') guard(shareQuote);
+    else if (a === 'toproject') guard(async () => { await ensureSaved(); const r = await api('projects', 'POST', { quote_id: Q.id }); toast('Project created', 'ok'); location.hash = '#/projects/' + r.id; });
     else if (a === 'usetpl') useTemplate();
     else if (a === 'savetpl') saveTemplate();
     else if (a === 'roofcalc') openRoofCalc();

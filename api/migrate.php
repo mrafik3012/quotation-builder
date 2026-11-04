@@ -3,7 +3,7 @@ declare(strict_types=1);
 // Lightweight forward-only migrations. Runs automatically (once per version) on the first signed-in request,
 // so already-installed sites upgrade just by uploading the new files.
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 function ensure_schema(): void
 {
@@ -35,6 +35,16 @@ function ensure_schema(): void
         foreach (['roofing' => '9954', 'interior' => '9954', 'construction' => '9954', 'pmc' => '9983'] as $k => $v) {
             if (get_setting('hsn_' . $k) === null) set_setting('hsn_' . $k, $v);
         }
+    }
+    if ($cur < 3) {
+        // projects created from accepted quotes: billing milestones, receipts, variation orders, site log
+        db()->exec("CREATE TABLE IF NOT EXISTS projects (id $pk, quote_no VARCHAR(40) NOT NULL UNIQUE, name VARCHAR(255) NOT NULL, client_id INT NULL, division VARCHAR(20) NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'active', base_value DECIMAL(14,2) NOT NULL DEFAULT 0, tax_rate DECIMAL(6,2) NOT NULL DEFAULT 18, start_date VARCHAR(10), end_date VARCHAR(10), notes TEXT, created_at VARCHAR(19) NOT NULL)$eng");
+        db()->exec("CREATE TABLE IF NOT EXISTS project_milestones (id $pk, project_id INT NOT NULL, label VARCHAR(190) NOT NULL, percent DECIMAL(7,3) NOT NULL DEFAULT 0, amount DECIMAL(14,2) NOT NULL DEFAULT 0, due_date VARCHAR(10), invoice_no VARCHAR(40), invoice_date VARCHAR(10), kind VARCHAR(12) NOT NULL DEFAULT 'stage', sort INT NOT NULL DEFAULT 0)$eng");
+        db()->exec("CREATE TABLE IF NOT EXISTS project_receipts (id $pk, project_id INT NOT NULL, milestone_id INT NULL, amount DECIMAL(14,2) NOT NULL, received_on VARCHAR(10) NOT NULL, mode VARCHAR(30), reference VARCHAR(120), note VARCHAR(255), created_at VARCHAR(19) NOT NULL)$eng");
+        db()->exec("CREATE TABLE IF NOT EXISTS project_variations (id $pk, project_id INT NOT NULL, title VARCHAR(255) NOT NULL, note TEXT, amount DECIMAL(14,2) NOT NULL DEFAULT 0, status VARCHAR(12) NOT NULL DEFAULT 'proposed', milestone_id INT NULL, created_at VARCHAR(19) NOT NULL)$eng");
+        db()->exec("CREATE TABLE IF NOT EXISTS project_log (id $pk, project_id INT NOT NULL, log_date VARCHAR(10) NOT NULL, text TEXT, progress INT NULL, author VARCHAR(120), created_at VARCHAR(19) NOT NULL)$eng");
+        db()->exec('CREATE INDEX idx_pm_proj ON project_milestones (project_id)');
+        db()->exec('CREATE INDEX idx_pr_proj ON project_receipts (project_id)');
     }
     set_setting('schema_v', (string)SCHEMA_VERSION);
 }

@@ -122,7 +122,7 @@ let lastHash = '';
 function layout() {
   const s = S.settings, logo = s.company_logo ? `<img src="${esc(s.company_logo)}" alt="">` : '<img class="logo" src="assets/logo.png" alt="Infraura">';
   $('#app').innerHTML = `<div class="shell"><aside class="side noprint"><div class="brand">${logo}<b>${esc(s.company_name || 'Infraura')}</b><small>Quotation Builder</small></div>
-  <nav><a href="#/dashboard" data-n="dashboard">Dashboard</a><a href="#/quotes" data-n="quotes">Quotes</a><a href="#/clients" data-n="clients">Clients</a><a href="#/rates" data-n="rates">Rate Cards</a><a href="#/settings" data-n="settings">Settings</a></nav>
+  <nav><a href="#/dashboard" data-n="dashboard">Dashboard</a><a href="#/quotes" data-n="quotes">Quotes</a><a href="#/projects" data-n="projects">Projects</a><a href="#/clients" data-n="clients">Clients</a><a href="#/rates" data-n="rates">Rate Cards</a><a href="#/settings" data-n="settings">Settings</a></nav>
   <div class="userbox">${esc(S.user.name)}<br>${esc(S.user.email)}<button id="lo">Sign out</button></div></aside><main class="main"><div id="view"></div></main></div>`;
   $('#lo').onclick = logout;
 }
@@ -136,7 +136,7 @@ async function route() {
   if (!S.user) return;
   lastHash = location.hash;
   const p = (location.hash.replace(/^#\/?/, '') || 'dashboard').split('/');
-  document.body.classList.toggle('printmode', p[0] === 'quotes' && p[2] === 'print');
+  document.body.classList.toggle('printmode', (p[0] === 'quotes' && p[2] === 'print') || (p[0] === 'projects' && p[2] === 'invoice'));
   if (!$('#view')) layout();
   $$('.side nav a').forEach(a => a.classList.toggle('on', a.dataset.n === p[0]));
   const v = $('#view'); v.onclick = v.oninput = v.onchange = null;
@@ -148,6 +148,10 @@ async function route() {
       else if (p[1] === 'new') await pageEditor(null, p[2]);
       else if (p[2] === 'print') await pagePrint(+p[1]);
       else await pageEditor(+p[1]);
+    } else if (p[0] === 'projects') {
+      if (!p[1]) await pageProjects();
+      else if (p[2] === 'invoice') await pageInvoice(+p[1], +p[3]);
+      else await pageProject(+p[1]);
     } else if (p[0] === 'clients') await pageClients();
     else if (p[0] === 'rates') await pageRates();
     else if (p[0] === 'settings') await pageSettings();
@@ -175,6 +179,7 @@ async function pageDashboard() {
    <div class="tile"><div class="l">Quotes</div><div class="v">${total}</div><div class="s">latest revisions</div></div>
    <div class="tile"><div class="l">Open pipeline</div><div class="v">${inr0(open)}</div><div class="s">${openN} draft / sent</div></div>
    <div class="tile"><div class="l">Accepted</div><div class="v">${inr0(g('accepted').value)}</div><div class="s">${g('accepted').n} quotes · ${win}</div></div>
+   <div class="tile"><div class="l">Receivables</div><div class="v ${d.receivables && d.receivables.overdue ? 'bad' : ''}">${inr0(d.receivables ? d.receivables.outstanding : 0)}</div><div class="s"><a href="#/projects">${d.receivables ? d.receivables.active : 0} active projects${d.receivables && d.receivables.overdue ? ' · ' + d.receivables.overdue + ' overdue' : ''}</a></div></div>
    <div class="tile"><div class="l">Clients</div><div class="v">${d.clients}</div><div class="s">in your book</div></div>
   </div>
   <div class="divcards">${Object.entries(DIVS).map(([k, label]) => {

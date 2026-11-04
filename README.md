@@ -29,6 +29,7 @@ PHP 8.0+ with `pdo_mysql` is required (default on Hostinger).
 - **Share with client** - private link (`view.html?t=...`): client views, picks an option, e-signs and accepts or declines. Send via WhatsApp / email; views and responses appear under *Client activity*.
 - **Margin tracking** - cost on rate items and lines (never printed), margin per quote and low-margin alert (Settings).
 - **Templates**, CGST/SGST vs IGST split, HSN/SAC, dashboard follow-up list.
+- **Projects** - convert an accepted quote into a project: billing milestones from the payment schedule, record payments, numbered tax invoices (CGST/SGST/IGST), variation orders and a site log; receivables on the dashboard.
 - Database upgrades run automatically on first sign-in after uploading new files (see `api/migrate.php`).
 
 ## Starter rate cards
