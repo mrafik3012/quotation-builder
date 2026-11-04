@@ -3,10 +3,20 @@ declare(strict_types=1);
 require_once __DIR__ . '/lib.php';
 // Shared business logic used by the web API (index.php) and the MCP endpoint (mcp.php).
 
-function all_settings(): array
+function all_settings_raw(): array
 {
     $out = [];
     foreach (q('SELECT k, v FROM settings')->fetchAll() as $r) $out[$r['k']] = (string)$r['v'];
+    return $out;
+}
+
+/** Settings for the browser. Secrets (SMTP password, cron key) never go to staff; admins see the password masked. */
+function all_settings(bool $admin = false): array
+{
+    $out = all_settings_raw();
+    unset($out['schema_v']);
+    if (!$admin) { unset($out['smtp_pass'], $out['cron_key'], $out['smtp_user'], $out['smtp_host']); }
+    elseif (($out['smtp_pass'] ?? '') !== '') $out['smtp_pass'] = '********';
     return $out;
 }
 
@@ -414,4 +424,20 @@ function roof_calc(array $in, array $mats, array $rates, array $custom = []): ?a
         $packages[] = ['material' => $key, 'label' => $m['label'], 'sheet_rate_per_sqft' => $rate($key, true), 'lines' => $items, 'total_before_gst' => $total, 'per_sqft_of_plan_area' => $g['plan'] > 0 ? money($total / $g['plan']) : 0];
     }
     return ['inputs' => $p, 'geometry' => array_map(fn($v) => is_float($v) ? round($v, 2) : $v, $g), 'packages' => $packages];
+}
+
+function app_base_url(): string
+{
+    $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+    $dir = rtrim(dirname(dirname($_SERVER['SCRIPT_NAME'] ?? '/api/mcp.php')), '/\\');
+    return ($https ? 'https://' : 'http://') . ($_SERVER['HTTP_HOST'] ?? 'localhost') . $dir;
+}
+
+/** Create (or reuse) the private client link for a quote family; moves a draft to "sent". Returns the token. */
+function ensure_share_token(array $row, array $user): string
+{
+    $ex = q('SELECT token FROM quote_shares WHERE quote_no = ?', [$row['quote_no']])->fetch();
+    $tok = $ex ? $ex['token'] : bin2hex(random_bytes(16));
+    if (!$ex) q('INSERT INTO quote_shares (quote_no,token,created_at) VALUES (?,?,?)', [$row['quote_no'], $tok, now()]);
+    return $tok;
 }

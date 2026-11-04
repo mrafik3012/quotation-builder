@@ -4,6 +4,8 @@ require __DIR__ . '/lib.php';
 require __DIR__ . '/core.php';
 require __DIR__ . '/migrate.php';
 require __DIR__ . '/projects.php';
+require __DIR__ . '/mail.php';
+require __DIR__ . '/auth.php';
 start_session();
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -44,10 +46,20 @@ function route(string $m, string $a, ?string $b, ?string $c): void
                 usleep(600000);
                 fail('Incorrect email or password', 401);
             }
+            if ((int)$u['totp_enabled'] === 1) {            // two-step sign-in
+                $code = trim((string)($d['code'] ?? ''));
+                if ($code === '') json_out(['need_2fa' => true]);
+                $good = false;
+                $ctr = totp_verify((string)$u['totp_secret'], $code, (int)$u['totp_last']);
+                if ($ctr) { q('UPDATE users SET totp_last = ? WHERE id = ?', [$ctr, $u['id']]); $good = true; }
+                elseif (use_recovery_code($u, $code)) { $good = true; audit(['name' => $u['name']], '2fa.recovery_used', $u['email']); }
+                if (!$good) { rate_limit_hit($kUser, 900); rate_limit_hit($kIp, 900); usleep(600000); fail('That code is not valid. Use the current code from your authenticator app, or a recovery code.', 401); }
+            }
             q('DELETE FROM rate_limits WHERE k = ?', [$kUser]);
             session_regenerate_id(true);
             $_SESSION['user'] = ['id' => (int)$u['id'], 'name' => $u['name'], 'email' => $u['email'], 'role' => $u['role']];
-            json_out(['user' => $_SESSION['user']]);
+            $_SESSION['must_change'] = (int)$u['must_change_password'] === 1;
+            json_out(['user' => $_SESSION['user'], 'must_change' => $_SESSION['must_change']]);
         }
         if ($b === 'logout' && $m === 'POST') {
             $_SESSION = [];
@@ -55,7 +67,9 @@ function route(string $m, string $a, ?string $b, ?string $c): void
             json_out(['ok' => true]);
         }
         if ($b === 'me' && $m === 'GET') {
-            json_out(['user' => current_user()]);
+            $cu = current_user();
+            if ($cu) { ensure_schema(); $row = q('SELECT totp_enabled FROM users WHERE id = ?', [$cu['id']])->fetch(); $cu['totp'] = $row ? (int)$row['totp_enabled'] === 1 : false; }
+            json_out(['user' => $cu, 'must_change' => !empty($_SESSION['must_change'])]);
         }
         if ($b === 'password' && $m === 'POST') {
             $u = require_auth();
@@ -64,13 +78,67 @@ function route(string $m, string $a, ?string $b, ?string $c): void
             if (!password_verify((string)($d['current'] ?? ''), $row['password_hash'])) fail('Current password is wrong');
             $new = (string)($d['new'] ?? '');
             if (strlen($new) < 8) fail('New password must be at least 8 characters');
-            q('UPDATE users SET password_hash = ? WHERE id = ?', [password_hash($new, PASSWORD_DEFAULT), $u['id']]);
+            if ($new === (string)($d['current'] ?? '')) fail('Choose a password different from the current one');
+            q('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?', [password_hash($new, PASSWORD_DEFAULT), $u['id']]);
+            $_SESSION['must_change'] = false;
+            audit($u, 'password.change', $u['email']);
             json_out(['ok' => true]);
+        }
+        if ($b === 'forgot' && $m === 'POST') {           // always answers the same way so it cannot be used to discover accounts
+            ensure_schema();
+            $d = body(); $email = strtolower(str($d['email'] ?? '', 190));
+            rate_limit('forgot:' . client_ip(), 6, 3600); rate_limit('forgotu:' . substr(hash('sha256', $email), 0, 40), 3, 3600);
+            $u = $email !== '' ? q('SELECT id,name,email FROM users WHERE email = ?', [$email])->fetch() : false;
+            if ($u && mail_configured()) {
+                $tok = bin2hex(random_bytes(24));
+                q('INSERT INTO password_resets (user_id,token_hash,expires_at,created_at) VALUES (?,?,?,?)', [$u['id'], hash('sha256', $tok), date('Y-m-d H:i:s', time() + 3600), now()]);
+                $url = app_base_url() . '/index.html#/reset/' . $tok;
+                send_mail($u['email'], 'Reset your password', email_html('Reset your password', '<p>Hello ' . htmlspecialchars($u['name'], ENT_QUOTES, 'UTF-8') . ',</p><p>We received a request to reset your password. This link works for one hour and can be used once. If you did not ask for it, ignore this e-mail - your password stays the same.</p>', ['Choose a new password', $url]));
+            }
+            json_out(['ok' => true, 'mail_configured' => mail_configured()]);
+        }
+        if ($b === 'reset' && $m === 'POST') {
+            ensure_schema(); rate_limit('reset:' . client_ip(), 10, 3600);
+            $d = body(); $pw = (string)($d['password'] ?? '');
+            if (strlen($pw) < 8) fail('Password must be at least 8 characters');
+            $r = q('SELECT * FROM password_resets WHERE token_hash = ? AND used = 0', [hash('sha256', (string)($d['token'] ?? ''))])->fetch();
+            if (!$r || $r['expires_at'] < now()) fail('This reset link is invalid or has expired. Request a new one.');
+            q('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?', [password_hash($pw, PASSWORD_DEFAULT), $r['user_id']]);
+            q('UPDATE password_resets SET used = 1 WHERE user_id = ?', [$r['user_id']]);
+            $ru = q('SELECT name FROM users WHERE id = ?', [$r['user_id']])->fetch();
+            audit(['name' => $ru['name'] ?? ''], 'password.reset', '#' . $r['user_id']);
+            json_out(['ok' => true]);
+        }
+        if ($b === '2fa' && $m === 'POST') {
+            $u = require_auth(); $row = q('SELECT * FROM users WHERE id = ?', [$u['id']])->fetch(); $d = body();
+            if ($c === 'setup') {
+                if ((int)$row['totp_enabled'] === 1) fail('Two-step sign-in is already on', 409);
+                $secret = totp_new_secret();
+                q('UPDATE users SET totp_secret = ?, totp_enabled = 0 WHERE id = ?', [$secret, $u['id']]);
+                $issuer = (string)(get_setting('company_name') ?: 'Infraura');
+                json_out(['secret' => $secret, 'uri' => totp_uri($secret, $u['email'], $issuer)]);
+            }
+            if ($c === 'enable') {
+                if (!$row['totp_secret'] || (int)$row['totp_enabled'] === 1) fail('Start the set-up first', 409);
+                $ctr = totp_verify((string)$row['totp_secret'], (string)($d['code'] ?? ''), 0);
+                if (!$ctr) fail('That code did not match. Check the time on your phone and try the latest code.');
+                [$plain, $json] = make_recovery_codes();
+                q('UPDATE users SET totp_enabled = 1, totp_last = ?, recovery_codes = ? WHERE id = ?', [$ctr, $json, $u['id']]);
+                audit($u, '2fa.enable', $u['email']);
+                json_out(['ok' => true, 'recovery_codes' => $plain]);
+            }
+            if ($c === 'disable') {
+                if (!password_verify((string)($d['password'] ?? ''), $row['password_hash'])) fail('Password is wrong');
+                q('UPDATE users SET totp_enabled = 0, totp_secret = NULL, recovery_codes = NULL, totp_last = 0 WHERE id = ?', [$u['id']]);
+                audit($u, '2fa.disable', $u['email']);
+                json_out(['ok' => true]);
+            }
         }
         fail('Not found', 404);
     }
 
     $user = require_auth();
+    if (!empty($_SESSION['must_change'])) fail('Please set a new password first', 428);
     $GLOBALS['CURRENT_USER'] = $user;
     ensure_schema();
 
@@ -78,7 +146,7 @@ function route(string $m, string $a, ?string $b, ?string $c): void
         case 'bootstrap': // everything the UI needs after login
             json_out([
                 'user' => $user,
-                'settings' => all_settings(),
+                'settings' => all_settings($user['role'] === 'admin'),
                 'clients' => q('SELECT id,name,contact_person,phone,email,address,gstin FROM clients ORDER BY name')->fetchAll(),
                 'rates' => rates_list(),
                 'templates' => templates_list(),
@@ -89,14 +157,20 @@ function route(string $m, string $a, ?string $b, ?string $c): void
             json_out(dashboard());
 
         case 'settings':
-            if ($m === 'GET') json_out(all_settings());
+            if ($m === 'GET') json_out(all_settings($user['role'] === 'admin'));
             if ($m === 'PUT') {
                 require_admin();
                 $d = body();
-                $allowed = array_keys(all_settings());
+                $allowed = array_diff(array_keys(all_settings_raw()), ['cron_key', 'cron_last_run', 'schema_v']);
                 foreach ($d as $k => $v) {
                     if (!in_array($k, $allowed, true)) continue;
                     $v = trim((string)$v);
+                    if ($k === 'smtp_pass' && $v === '********') continue;   // masked placeholder echoed back by the form: keep the stored password
+                    if ($k === 'smtp_port' && (!ctype_digit($v) || (int)$v < 1 || (int)$v > 65535)) fail('SMTP port must be a number between 1 and 65535');
+                    if ($k === 'smtp_enc' && !in_array($v, ['ssl', 'tls', 'none'], true)) fail('Encryption must be ssl, tls or none');
+                    if ($k === 'mail_from' && $v !== '' && !filter_var($v, FILTER_VALIDATE_EMAIL)) fail('From address must be a valid e-mail address');
+                    if ($k === 'client_reminders' && !in_array($v, ['0', '1'], true)) fail('Invalid reminder setting');
+                    if ($k === 'backup_keep' && (!ctype_digit($v) || (int)$v < 1 || (int)$v > 90)) fail('Keep between 1 and 90 backups');
                     if ($k === 'validity_days' && (!ctype_digit($v) || (int)$v < 1 || (int)$v > 365)) fail('Validity must be a whole number of days between 1 and 365');
                     if (($k === 'min_margin' || strpos($k, 'gst_') === 0) && (!is_numeric($v) || (float)$v < 0 || (float)$v > 100)) fail('Percentages must be numbers between 0 and 100');
                     if ($k === 'quote_prefix' && !preg_match('/^[A-Za-z0-9-]{1,10}$/', $v)) fail('Quote prefix: 1-10 letters, digits or hyphens');
@@ -105,14 +179,14 @@ function route(string $m, string $a, ?string $b, ?string $c): void
                     set_setting($k, $v);
                 }
                 audit($user, 'settings.save', 'Company / defaults updated');
-                json_out(all_settings());
+                json_out(all_settings($user['role'] === 'admin'));
             }
             break;
 
         case 'users':
             require_admin();
-            if ($m === 'GET') json_out(q('SELECT id,name,email,role,created_at FROM users ORDER BY id')->fetchAll());
-            if ($m === 'POST') {
+            if ($m === 'GET' && $b === null) json_out(q('SELECT id,name,email,role,created_at,totp_enabled,must_change_password FROM users ORDER BY id')->fetchAll());
+            if ($m === 'POST' && $b === null) {
                 $d = body();
                 $email = strtolower(str($d['email'] ?? '', 190));
                 if (!filter_var($email, FILTER_VALIDATE_EMAIL)) fail('Valid email required');
@@ -124,12 +198,49 @@ function route(string $m, string $a, ?string $b, ?string $c): void
                 audit($user, 'user.add', $email . ' (' . $role . ')');
                 json_out(['ok' => true], 201);
             }
-            if ($m === 'DELETE' && $b !== null) {
-                if ((int)$b === $user['id']) fail('You cannot delete yourself');
-                audit($user, 'user.delete', '#' . (int)$b);
-                q('DELETE FROM users WHERE id = ?', [(int)$b]);
+            $uid = $b !== null && ctype_digit($b) ? (int)$b : 0;
+            $target = $uid ? q('SELECT * FROM users WHERE id = ?', [$uid])->fetch() : null;
+            if ($b !== null && !$target) fail('User not found', 404);
+            if ($m === 'PUT' && $target) {
+                $d = body(); $role = ($d['role'] ?? $target['role']) === 'admin' ? 'admin' : 'staff';
+                if ($target['role'] === 'admin' && $role !== 'admin' && admin_count() <= 1) fail('There must always be at least one admin', 409);
+                q('UPDATE users SET name = ?, role = ? WHERE id = ?', [str($d['name'] ?? $target['name'], 120) ?: $target['name'], $role, $uid]);
+                audit($user, 'user.update', $target['email'] . ' -> ' . $role);
                 json_out(['ok' => true]);
             }
+            if ($m === 'POST' && $target && $c === 'reset-password') {
+                $d = body(); $tmp = temp_password();
+                q('UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?', [password_hash($tmp, PASSWORD_DEFAULT), $uid]);
+                $emailed = false;
+                if (!empty($d['send_email']) && mail_configured()) { [$emailed] = send_mail($target['email'], 'Your password was reset', email_html('Your password was reset', '<p>An administrator reset your password. Your temporary password is:</p><p style="font-size:20px;font-weight:700;letter-spacing:1px">' . htmlspecialchars($tmp, ENT_QUOTES, 'UTF-8') . '</p><p>You will be asked to choose a new password when you sign in.</p>', ['Sign in', app_base_url() . '/index.html'])); }
+                audit($user, 'user.reset_password', $target['email']);
+                json_out(['ok' => true, 'temp_password' => $tmp, 'emailed' => $emailed]);
+            }
+            if ($m === 'POST' && $target && $c === 'disable-2fa') {
+                q('UPDATE users SET totp_enabled = 0, totp_secret = NULL, recovery_codes = NULL, totp_last = 0 WHERE id = ?', [$uid]);
+                audit($user, 'user.disable_2fa', $target['email']);
+                json_out(['ok' => true]);
+            }
+            if ($m === 'DELETE' && $target) {
+                if ($uid === (int)$user['id']) fail('You cannot delete yourself');
+                if ($target['role'] === 'admin' && admin_count() <= 1) fail('There must always be at least one admin', 409);
+                audit($user, 'user.delete', $target['email']);
+                q('DELETE FROM users WHERE id = ?', [$uid]);
+                json_out(['ok' => true]);
+            }
+            break;
+
+        case 'mail':
+            require_admin();
+            if ($m === 'POST' && $b === 'test') {
+                $to = strtolower(str(body()['to'] ?? '', 190));
+                if (!filter_var($to, FILTER_VALIDATE_EMAIL)) fail('Enter the address to send the test to');
+                rate_limit('mailtest:' . $user['id'], 10, 3600);
+                [$ok, $err] = send_mail($to, 'Test e-mail from ' . (get_setting('company_name') ?: 'Infraura'), email_html('E-mail is working', '<p>This is a test message from your quotation app. If you can read it, quotes, reminders and password resets can be e-mailed.</p>'));
+                audit($user, 'mail.test', $to . ($ok ? ' ok' : ' failed'));
+                json_out(['ok' => $ok, 'error' => $err]);
+            }
+            if ($m === 'GET' && $b === 'log') json_out(q('SELECT recipient,subject,status,error,created_at FROM email_log ORDER BY id DESC LIMIT 40')->fetchAll());
             break;
 
         case 'clients':
@@ -355,6 +466,27 @@ function quotes_route(string $m, ?string $b, ?string $c, array $user): void
         log_event($row['quote_no'], (int)$row['rev'], 'shared', ['by' => $user['name']], $user['name']);
         $fresh = q('SELECT updated_at FROM quotes WHERE id = ?', [$id])->fetch();
         json_out(['token' => $tok, 'updated_at' => $fresh['updated_at']]);
+    }
+
+    if ($m === 'POST' && $c === 'email') {
+        if (!(int)$row['is_latest']) fail('Only the latest revision can be e-mailed', 409);
+        if (!mail_configured()) fail('E-mail is not set up yet. Add your mail account under Settings > E-mail.');
+        rate_limit('qmail:' . $user['id'], 40, 3600);
+        $in = body(); $cl = json_decode((string)$row['client_json'], true) ?: [];
+        $to = strtolower(str($in['to'] ?? ($cl['email'] ?? ''), 190));
+        if (!filter_var($to, FILTER_VALIDATE_EMAIL)) fail('Enter a valid e-mail address for the client');
+        $tok = ensure_share_token($row, $user);
+        $co = (string)(get_setting('company_name') ?: 'Infraura');
+        $msg = trim(str($in['message'] ?? '', 2000));
+        $bodyHtml = '<p>Dear ' . htmlspecialchars($cl['contact_person'] ?: ($cl['name'] ?? ''), ENT_QUOTES, 'UTF-8') . ',</p>' . ($msg !== '' ? '<p>' . nl2br(htmlspecialchars($msg, ENT_QUOTES, 'UTF-8')) . '</p>' : '<p>Please find your quotation ' . htmlspecialchars($row['quote_no'], ENT_QUOTES, 'UTF-8') . ($row['title'] ? ' for <b>' . htmlspecialchars($row['title'], ENT_QUOTES, 'UTF-8') . '</b>' : '') . '.</p>')
+            . '<p>You can view it, choose an option and accept it online. It is valid until ' . htmlspecialchars(date('d-m-Y', strtotime((string)$row['valid_until'])), ENT_QUOTES, 'UTF-8') . '.</p>';
+        [$sent, $err] = send_mail($to, 'Quotation ' . $row['quote_no'] . ' from ' . $co, email_html('Your quotation ' . $row['quote_no'], $bodyHtml, ['View quotation', app_base_url() . '/view.html?t=' . $tok]));
+        if (!$sent) fail('The e-mail could not be sent: ' . $err);
+        if ($row['status'] === 'draft') q('UPDATE quotes SET status = ?, updated_at = ? WHERE id = ?', ['sent', now(), $id]);
+        log_event($row['quote_no'], (int)$row['rev'], 'emailed', ['to' => $to, 'by' => $user['name']], $user['name']);
+        audit($user, 'quote.email', $row['quote_no'] . ' -> ' . $to);
+        $fresh = q('SELECT updated_at FROM quotes WHERE id = ?', [$id])->fetch();
+        json_out(['ok' => true, 'to' => $to, 'updated_at' => $fresh['updated_at']]);
     }
 
     if ($m === 'POST' && $c === 'status') {

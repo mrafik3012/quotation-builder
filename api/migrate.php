@@ -3,7 +3,7 @@ declare(strict_types=1);
 // Lightweight forward-only migrations. Runs automatically (once per version) on the first signed-in request,
 // so already-installed sites upgrade just by uploading the new files.
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 function ensure_schema(): void
 {
@@ -57,6 +57,39 @@ function ensure_schema(): void
     if ($cur < 6) {
         // API tokens for AI assistants / integrations (MCP). Only a SHA-256 hash of the token is stored.
         ddl("CREATE TABLE IF NOT EXISTS api_tokens (id $pk, name VARCHAR(120) NOT NULL, token_hash CHAR(64) NOT NULL UNIQUE, prefix VARCHAR(16) NOT NULL, scope VARCHAR(10) NOT NULL DEFAULT 'read', hide_costs TINYINT NOT NULL DEFAULT 1, user_id INT NULL, last_used_at VARCHAR(19), expires_at VARCHAR(19), revoked TINYINT NOT NULL DEFAULT 0, created_at VARCHAR(19) NOT NULL)$eng");
+    }
+    if ($cur < 7) {
+        // --- accounts: 2FA, forced password change, password-reset tokens
+        foreach (['totp_secret VARCHAR(64) NULL', 'totp_enabled TINYINT NOT NULL DEFAULT 0', 'totp_last INT NOT NULL DEFAULT 0', 'recovery_codes TEXT NULL', 'must_change_password TINYINT NOT NULL DEFAULT 0'] as $def) {
+            if (!column_exists('users', explode(' ', $def)[0])) ddl('ALTER TABLE users ADD COLUMN ' . $def);
+        }
+        ddl("CREATE TABLE IF NOT EXISTS password_resets (id $pk, user_id INT NOT NULL, token_hash CHAR(64) NOT NULL UNIQUE, expires_at VARCHAR(19) NOT NULL, used TINYINT NOT NULL DEFAULT 0, created_at VARCHAR(19) NOT NULL)$eng");
+        // --- e-mail log + settings
+        ddl("CREATE TABLE IF NOT EXISTS email_log (id $pk, recipient VARCHAR(190) NOT NULL, subject VARCHAR(255), status VARCHAR(12) NOT NULL, error VARCHAR(500), created_at VARCHAR(19) NOT NULL)$eng");
+        foreach (['smtp_host' => '', 'smtp_port' => '465', 'smtp_enc' => 'ssl', 'smtp_user' => '', 'smtp_pass' => '', 'mail_from' => '', 'mail_from_name' => '', 'client_reminders' => '0', 'backup_keep' => '14', 'cron_last_run' => '', 'cron_key' => bin2hex(random_bytes(16))] as $k => $v) {
+            if (get_setting($k) === null) set_setting($k, $v);
+        }
+        // --- invoicing: cancel, credit notes, receipts, e-invoice references
+        foreach (['irn VARCHAR(80) NULL', 'ack_no VARCHAR(40) NULL', 'ack_date VARCHAR(10) NULL'] as $def) {
+            if (!column_exists('project_milestones', explode(' ', $def)[0])) ddl('ALTER TABLE project_milestones ADD COLUMN ' . $def);
+        }
+        if (!column_exists('project_receipts', 'receipt_no')) ddl('ALTER TABLE project_receipts ADD COLUMN receipt_no VARCHAR(40) NULL');
+        ddl("CREATE TABLE IF NOT EXISTS invoice_history (id $pk, project_id INT NOT NULL, milestone_id INT NOT NULL, invoice_no VARCHAR(40) NOT NULL, invoice_date VARCHAR(10), amount DECIMAL(14,2) NOT NULL DEFAULT 0, status VARCHAR(12) NOT NULL, reason VARCHAR(255), created_at VARCHAR(19) NOT NULL)$eng");
+        ddl("CREATE TABLE IF NOT EXISTS credit_notes (id $pk, project_id INT NOT NULL, milestone_id INT NOT NULL, credit_no VARCHAR(40) NOT NULL, credit_date VARCHAR(10) NOT NULL, amount DECIMAL(14,2) NOT NULL, reason VARCHAR(255), created_at VARCHAR(19) NOT NULL)$eng");
+        // --- AMC / warranty renewals, site-log photos
+        foreach (['amc_end VARCHAR(10) NULL', 'amc_note VARCHAR(255) NULL'] as $def) { if (!column_exists('projects', explode(' ', $def)[0])) ddl('ALTER TABLE projects ADD COLUMN ' . $def); }
+        if (!column_exists('project_log', 'photos')) ddl("ALTER TABLE project_log ADD COLUMN photos $long NULL");
+        // --- privacy
+        if (!column_exists('clients', 'anonymized')) ddl('ALTER TABLE clients ADD COLUMN anonymized TINYINT NOT NULL DEFAULT 0');
+        // --- performance for large data sets
+        foreach (['CREATE INDEX idx_q_latest ON quotes (is_latest, status)', 'CREATE INDEX idx_q_client ON quotes (client_id)', 'CREATE INDEX idx_q_upd ON quotes (updated_at)', 'CREATE INDEX idx_q_no ON quotes (quote_no)',
+                  'CREATE INDEX idx_ev_type ON quote_events (quote_no, type)', 'CREATE INDEX idx_pl_proj ON project_log (project_id)', 'CREATE INDEX idx_pv_proj ON project_variations (project_id)', 'CREATE INDEX idx_rc_ms ON project_receipts (milestone_id)',
+                  'CREATE INDEX idx_cn_proj ON credit_notes (project_id)', 'CREATE INDEX idx_audit_id ON audit_log (created_at)'] as $sql) ddl($sql);
+        // --- OAuth 2.1 for MCP connectors (claude.ai etc.)
+        ddl("CREATE TABLE IF NOT EXISTS oauth_clients (client_id VARCHAR(64) NOT NULL PRIMARY KEY, name VARCHAR(190) NOT NULL, redirect_uris $long, created_at VARCHAR(19) NOT NULL)$eng");
+        ddl("CREATE TABLE IF NOT EXISTS oauth_codes (code_hash CHAR(64) NOT NULL PRIMARY KEY, client_id VARCHAR(64) NOT NULL, user_id INT NOT NULL, scope VARCHAR(10) NOT NULL, hide_costs TINYINT NOT NULL DEFAULT 1, redirect_uri VARCHAR(500) NOT NULL, code_challenge VARCHAR(128) NOT NULL, grant_id VARCHAR(32) NOT NULL, expires_at INT NOT NULL, used TINYINT NOT NULL DEFAULT 0)$eng");
+        ddl("CREATE TABLE IF NOT EXISTS oauth_refresh (token_hash CHAR(64) NOT NULL PRIMARY KEY, client_id VARCHAR(64) NOT NULL, user_id INT NOT NULL, scope VARCHAR(10) NOT NULL, hide_costs TINYINT NOT NULL DEFAULT 1, grant_id VARCHAR(32) NOT NULL, expires_at INT NOT NULL, revoked TINYINT NOT NULL DEFAULT 0)$eng");
+        foreach (['oauth_client VARCHAR(64) NULL', 'grant_id VARCHAR(32) NULL'] as $def) { if (!column_exists('api_tokens', explode(' ', $def)[0])) ddl('ALTER TABLE api_tokens ADD COLUMN ' . $def); }
     }
     set_setting('schema_v', (string)SCHEMA_VERSION);
 }

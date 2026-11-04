@@ -40,12 +40,6 @@ function bearer_token(): string
     return trim((string)($_SERVER['HTTP_X_API_KEY'] ?? ''));
 }
 
-function app_base_url(): string
-{
-    $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
-    $dir = rtrim(dirname(dirname($_SERVER['SCRIPT_NAME'] ?? '/api/mcp.php')), '/\\');
-    return ($https ? 'https://' : 'http://') . ($_SERVER['HTTP_HOST'] ?? 'localhost') . $dir;
-}
 
 /* ---------------- request handling ---------------- */
 $method = $_SERVER['REQUEST_METHOD'];

@@ -83,6 +83,7 @@ function drawEditor() {
    ${divChip(Q.division)} ${isNew ? '' : statusChip(Q.status)}</div>
   <div class="row noprint" style="margin-bottom:14px">
    ${ro ? '' : '<button class="btn pri" data-act="save">Save</button>'}
+   ${isNew || sup ? '' : '<button class="btn" data-act="emailq">Email to client</button>'}
    ${isNew || sup ? '' : '<button class="btn pri" data-act="share">' + (acc ? 'Client link' : 'Share with client') + '</button>'}
    ${Q.status === 'accepted' && Q.id ? (Q.project ? `<a class="btn pri" href="#/projects/${Q.project}">Open project</a>` : '<button class="btn pri" data-act="toproject">Convert to project</button>') : ''}
    ${Q.division === 'roofing' && !ro ? '<button class="btn" data-act="roofcalc">Roofing calculator</button>' : ''}
@@ -319,6 +320,7 @@ function wireEditor() {
     if (a === 'latest') { e.preventDefault(); const l = Q.revisions.find(r => r.status !== 'superseded') || Q.revisions[0]; if (l) location.hash = '#/quotes/' + l.id; }
     else if (a === 'save') guard(saveQuote);
     else if (a === 'share') guard(shareQuote);
+    else if (a === 'emailq') guard(async () => { if (Q.status !== 'accepted') await ensureSaved(); emailQuoteDialog(); });
     else if (a === 'toproject') guard(async () => { await ensureSaved(); const r = await api('projects', 'POST', { quote_id: Q.id }); toast('Project created', 'ok'); location.hash = '#/projects/' + r.id; });
     else if (a === 'rooms') roomsModal();
     else if (a === 'csv') exportLines();

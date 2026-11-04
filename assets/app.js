@@ -73,6 +73,7 @@ async function api(path, method = 'GET', body) {
   let data = null;
   try { data = await res.json(); } catch (e) { /* non-JSON */ }
   if (res.status === 401 && path !== 'auth/login' && path !== 'auth/me') { S.user = null; showLogin(); throw new Error('Session expired'); }
+  if (res.status === 428 && S.user) { showMustChange(); throw new Error('Session expired'); }
   if (res.status === 503 && data && data.error === 'not_installed') throw new Error('Not installed yet — open install.php on your server first');
   if (!res.ok) throw new Error((data && data.error) || ('Request failed (' + res.status + ')'));
   return data;
@@ -88,10 +89,13 @@ function download(name, text, type = 'text/csv') {
 async function init() {
   window.addEventListener('hashchange', onHash);
   window.addEventListener('beforeunload', e => { if (window.__dirty) { e.preventDefault(); e.returnValue = ''; } });
+  const rm = /^#\/reset\/([a-f0-9]{48})$/.exec(location.hash);
+  if (rm) return showReset(rm[1]);
   try {
     const me = await api('auth/me');
     if (!me.user) return showLogin();
     S.user = me.user;
+    if (me.must_change) return showMustChange();
     await loadBootstrap();
     route();
     setInterval(() => { if (S.user) api('auth/me').catch(() => {}); }, 8 * 60 * 1000); // keep the session alive while a long quote is being edited
@@ -103,19 +107,62 @@ async function loadBootstrap() {
   const b = await api('bootstrap');
   S.user = b.user; S.settings = b.settings; S.clients = b.clients; S.rates = b.rates; S.templates = b.templates || [];
 }
-function showLogin() {
+function authShell(inner) {
   document.body.classList.remove('printmode');
-  $('#app').innerHTML = `<form class="login" id="lf"><img class="logo" src="assets/logo.png" alt="Infraura"><h1>Quotation Builder</h1><p class="muted" style="margin:0 0 16px">Sign in to continue</p>
-  <label class="f"><span>Email</span><input type="email" name="email" required autofocus autocomplete="username"></label>
+  $('#app').innerHTML = `<div class="login"><img class="logo" src="assets/logo.png" alt="Infraura"><h1>Quotation Builder</h1>${inner}</div>`;
+}
+function showLogin(prefill = {}) {
+  authShell(`<form id="lf"><p class="muted" style="margin:0 0 16px">Sign in to continue</p>
+  <label class="f"><span>Email</span><input type="email" name="email" required autofocus autocomplete="username" value="${esc(prefill.email || '')}"></label>
   <label class="f"><span>Password</span><input type="password" name="password" required autocomplete="current-password"></label>
-  <button class="btn pri" style="width:100%;justify-content:center">Sign in</button></form>`;
+  <label class="f" id="codebox" style="display:${prefill.need2fa ? 'block' : 'none'}"><span>6-digit code from your authenticator app (or a recovery code)</span><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="12"></label>
+  <button class="btn pri" style="width:100%;justify-content:center">Sign in</button>
+  <p class="small" style="text-align:center;margin:14px 0 0"><a href="#" id="forgot">Forgot password?</a></p></form>`);
+  $('#forgot').onclick = e => { e.preventDefault(); showForgot($('#lf').email.value); };
+  if (prefill.need2fa) $('#lf').code.focus();
   $('#lf').onsubmit = async e => {
     e.preventDefault();
     const f = e.target, btn = $('button', f); btn.disabled = true;
     try {
-      const r = await api('auth/login', 'POST', { email: f.email.value, password: f.password.value });
-      S.user = r.user; await loadBootstrap(); location.hash = '#/dashboard'; route();
+      const r = await api('auth/login', 'POST', { email: f.email.value, password: f.password.value, code: f.code.value });
+      if (r.need_2fa) { $('#codebox').style.display = 'block'; f.code.focus(); toast('Enter the code from your authenticator app', ''); btn.disabled = false; return; }
+      S.user = r.user;
+      if (r.must_change) return showMustChange();
+      await loadBootstrap(); location.hash = '#/dashboard'; route();
     } catch (err) { toast(err.message, 'err'); btn.disabled = false; }
+  };
+}
+function showForgot(email = '') {
+  authShell(`<form id="ff"><p class="muted" style="margin:0 0 16px">Enter your e-mail and we will send a link to choose a new password.</p>
+  <label class="f"><span>Email</span><input type="email" name="email" required autofocus value="${esc(email)}"></label>
+  <button class="btn pri" style="width:100%;justify-content:center">Send reset link</button><p class="small" style="text-align:center;margin:14px 0 0"><a href="#" id="back">Back to sign in</a></p></form>`);
+  $('#back').onclick = e => { e.preventDefault(); showLogin(); };
+  $('#ff').onsubmit = async e => {
+    e.preventDefault(); const f = e.target;
+    try { const r = await api('auth/forgot', 'POST', { email: f.email.value });
+      $('#ff').innerHTML = `<p>${r.mail_configured ? 'If that address belongs to an account, a reset link is on its way. It works for one hour.' : 'E-mail has not been set up for this site yet. Please ask your administrator to reset your password (Settings → Team).'}</p><p class="small"><a href="#" id="back2">Back to sign in</a></p>`;
+      $('#back2').onclick = ev => { ev.preventDefault(); showLogin(); };
+    } catch (err) { toast(err.message, 'err'); }
+  };
+}
+function showReset(token) {
+  authShell(`<form id="rf"><p class="muted" style="margin:0 0 16px">Choose a new password</p>
+  <label class="f"><span>New password (min 8 characters)</span><input type="password" name="pw" minlength="8" required autofocus autocomplete="new-password"></label>
+  <label class="f"><span>Repeat it</span><input type="password" name="pw2" minlength="8" required autocomplete="new-password"></label>
+  <button class="btn pri" style="width:100%;justify-content:center">Save new password</button></form>`);
+  $('#rf').onsubmit = async e => {
+    e.preventDefault(); const f = e.target; if (f.pw.value !== f.pw2.value) return toast('The two passwords do not match', 'err');
+    try { await api('auth/reset', 'POST', { token, password: f.pw.value }); toast('Password changed - please sign in', 'ok'); history.replaceState(null, '', location.pathname); showLogin(); } catch (err) { toast(err.message, 'err'); }
+  };
+}
+function showMustChange() {
+  authShell(`<form id="mc"><div class="banner" style="margin:0 0 14px">An administrator reset your password. Choose your own before continuing.</div>
+  <label class="f"><span>Temporary password</span><input type="password" name="cur" required autocomplete="current-password"></label>
+  <label class="f"><span>New password (min 8 characters)</span><input type="password" name="pw" minlength="8" required autocomplete="new-password"></label>
+  <button class="btn pri" style="width:100%;justify-content:center">Change password</button></form>`);
+  $('#mc').onsubmit = async e => {
+    e.preventDefault(); const f = e.target;
+    try { await api('auth/password', 'POST', { current: f.cur.value, new: f.pw.value }); toast('Password changed', 'ok'); await loadBootstrap(); location.hash = '#/dashboard'; route(); } catch (err) { toast(err.message, 'err'); }
   };
 }
 async function logout() { await guard(() => api('auth/logout', 'POST')); S.user = null; window.__dirty = false; showLogin(); }
@@ -401,8 +448,8 @@ async function pageSettings() {
   ${admin ? `<div class="card"><h3>Backup &amp; activity log</h3><div class="row"><a class="btn" href="api/index.php?r=backup">Download full backup (JSON)</a><span class="muted small">Quotes, clients, rate cards, projects and settings. Keep a copy regularly - also enable automatic backups in Hostinger hPanel.</span></div><div id="audit" style="margin-top:12px"></div></div>` : ''}
   ${admin ? '<div class="card" id="aicard"><span class="muted small">Loading…</span></div>' : ''}
   <div class="card"><h3>Quote templates</h3>${(S.templates || []).length ? `<table class="tbl"><tbody>${S.templates.map(t => `<tr><td><b>${esc(t.name)}</b></td><td>${divChip(t.division)}</td><td class="r">${admin ? `<button class="btn sm dng" data-act="deltpl" data-id="${t.id}">Delete</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted small" style="margin:0">No templates yet. Open any quote and click “Save as template”.</p>'}</div>
-  <div class="grid2"><div class="card"><h3>Change my password</h3><form id="pw"><label class="f"><span>Current password</span><input type="password" name="current" required></label><label class="f"><span>New password (min 8)</span><input type="password" name="new" minlength="8" required></label><button class="btn">Update password</button></form></div>
-  ${admin ? `<div class="card"><h3>Team</h3><div id="ul"></div><form id="uf" style="margin-top:12px"><div class="grid2"><label class="f"><span>Name</span><input name="name" required></label><label class="f"><span>Email</span><input name="email" type="email" required></label><label class="f"><span>Password</span><input name="password" type="password" minlength="8" required></label><label class="f"><span>Role</span><select name="role"><option value="staff">Staff</option><option value="admin">Admin</option></select></label></div><button class="btn">Add user</button></form></div>` : ''}</div>`;
+  <div class="card" id="seccard"></div>
+  ${admin ? '<div class="card" id="mailcard"></div><div class="card" id="teamcard"></div>' : ''}`;
   const v = $('#view');
   let logo = s.company_logo || '';
   const logoIn = $('#logo');
@@ -420,17 +467,11 @@ async function pageSettings() {
       $$('.side nav a').forEach(a => a.classList.toggle('on', a.dataset.n === 'settings'));
     });
     if (t.dataset.act === 'deltpl' && confirmBox('Delete this template?')) guard(async () => { await api('templates/' + t.dataset.id, 'DELETE'); S.templates = await api('templates'); pageSettings(); });
-    if (t.dataset.act === 'deluser' && confirmBox('Remove this user?')) guard(async () => { await api('users/' + t.dataset.id, 'DELETE'); loadUsers(); });
   };
-  $('#pw').onsubmit = e => { e.preventDefault(); const f = e.target; guard(async () => { await api('auth/password', 'POST', { current: f.current.value, new: f.new.value }); toast('Password updated', 'ok'); f.reset(); }); };
-  async function loadUsers() {
-    const us = await api('users');
-    $('#ul').innerHTML = `<table class="tbl"><tbody>${us.map(u => `<tr><td><b>${esc(u.name)}</b><div class="muted small">${esc(u.email)}</div></td><td>${esc(u.role)}</td><td class="r">${u.id === S.user.id ? '<span class="muted small">you</span>' : `<button class="btn sm dng" data-act="deluser" data-id="${u.id}">Remove</button>`}</td></tr>`).join('')}</tbody></table>`;
-  }
+  renderSecurity();
   if (admin) {
     api('audit').then(a => { $('#audit').innerHTML = a.length ? `<div class="small" style="max-height:220px;overflow:auto">${a.map(x => `<div class="row" style="margin-bottom:3px"><span class="muted nw">${esc(x.created_at.slice(0, 16))}</span><span class="nw">${esc(x.user_name)}</span><span><b>${esc(x.action)}</b> ${esc(x.detail)}</span></div>`).join('')}</div>` : '<span class="muted small">No activity recorded yet.</span>'; }).catch(() => {});
     renderAiCard().catch(() => { $('#aicard').innerHTML = '<span class="muted small">AI settings unavailable.</span>'; });
-    await loadUsers();
-    $('#uf').onsubmit = e => { e.preventDefault(); const f = e.target; guard(async () => { await api('users', 'POST', Object.fromEntries(new FormData(f))); toast('User added', 'ok'); f.reset(); loadUsers(); }); };
+    renderMailCard(); renderTeam();
   }
 }
