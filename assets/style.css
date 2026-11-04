@@ -7,8 +7,8 @@ a{color:var(--gold2);text-decoration:none}a:hover{text-decoration:underline}
 .shell{display:flex;min-height:100vh}
 .side{width:230px;background:var(--side);color:#cbd5e1;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;flex-shrink:0}
 .side .brand{padding:18px 18px 14px;border-bottom:1px solid var(--brand);display:flex;flex-direction:column;gap:2px}
-.side .brand b{color:var(--gold2);font-size:17px}.side .brand small{color:#8a7a4a}.side .brand .logo{width:100%;max-width:170px;height:auto;margin-bottom:8px;border-radius:6px}
-.side .brand img{max-height:38px;max-width:150px;object-fit:contain;align-self:flex-start;margin-bottom:6px;background:#000;padding:0;border-radius:5px}
+.side .brand b{color:var(--gold2);font-size:17px}.side .brand small{color:#8a7a4a}.side .brand .logo{width:100%;max-width:170px;height:auto;margin-bottom:8px}
+.side .brand img{max-height:38px;max-width:150px;object-fit:contain;align-self:flex-start;margin-bottom:6px}
 .side nav{flex:1;padding:10px}
 .side nav a{display:block;padding:9px 12px;border-radius:8px;color:#cfc6ab;margin-bottom:2px;font-weight:500}
 .side nav a:hover{background:#1a1608;text-decoration:none;color:var(--gold2)}
@@ -89,7 +89,7 @@ table{border-collapse:collapse;width:100%}
 #toasts{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:100}
 .toast{background:#000;border:1px solid var(--brand);color:var(--gold2);padding:10px 16px;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.25);max-width:340px}
 .toast.err{background:#5a1616;color:#fff}.toast.ok{background:#14361f;color:#fff}
-.login{max-width:380px;margin:9vh auto;background:var(--card);border:1px solid var(--brand-d);padding:28px;border-radius:14px;box-shadow:0 0 40px rgba(212,175,55,.12)}.login .logo{display:block;width:100%;max-width:240px;margin:0 auto 14px;border-radius:8px}
+.login{max-width:380px;margin:9vh auto;background:var(--card);border:1px solid var(--brand-d);padding:28px;border-radius:14px;box-shadow:0 0 40px rgba(212,175,55,.12)}.login .logo{display:block;width:100%;max-width:240px;margin:0 auto 14px}
 .login h1{margin:0 0 4px;font-size:22px;color:var(--gold2)}
 .pmc-modes{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
 .pmc-modes label{border:1px solid #3a3320;border-radius:8px;padding:7px 12px;cursor:pointer;font-weight:600}
@@ -101,7 +101,7 @@ table{border-collapse:collapse;width:100%}
 .toolbar{display:flex;gap:10px;margin-bottom:14px;align-items:center}
 .doc{background:#fff;--brand:#b8921f;--brand-d:#8a6a0f;max-width:210mm;margin:0 auto;padding:14mm 14mm;box-shadow:0 2px 16px rgba(0,0,0,.12);font-size:12.5px;color:#111;line-height:1.45}
 .doc .hd{display:flex;justify-content:space-between;gap:20px;border-bottom:3px solid #d4af37;padding-bottom:10px;margin-bottom:12px}
-.doc .co{display:flex;gap:12px;align-items:flex-start}.doc .co img{background:#000;padding:4px 8px;border-radius:6px;max-height:64px;max-width:160px;object-fit:contain}
+.doc .co{display:flex;gap:12px;align-items:flex-start}.doc .co img{max-height:78px;max-width:190px;object-fit:contain}
 .doc .co h2{margin:0;font-size:20px;color:#000}.doc .co div{font-size:11.5px;color:#475569;white-space:pre-line}
 .doc .qt{text-align:right}.doc .qt h1{margin:0;font-size:22px;letter-spacing:.12em;color:#000}
 .doc .qt table{margin-left:auto;font-size:12px}.doc .qt td{padding:1px 0 1px 10px}.doc .qt td:first-child{color:#64748b}
