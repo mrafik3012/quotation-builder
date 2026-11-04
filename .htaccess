@@ -1,7 +1,17 @@
 Options -Indexes
 DirectoryIndex index.html
 
+# Never serve internals: database files, tests, scripts, docs source, VCS data
+<FilesMatch "\.(sqlite|sqlite3|db|sh|md|log|sql|bak)$">
+    Require all denied
+</FilesMatch>
+<IfModule mod_alias.c>
+    RedirectMatch 404 ^/(.*/)?(\.git|tests)(/|$)
+</IfModule>
+
 <IfModule mod_headers.c>
+    Header set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+
     Header set X-Content-Type-Options "nosniff"
     Header set X-Frame-Options "SAMEORIGIN"
     Header set Referrer-Policy "same-origin"

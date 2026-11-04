@@ -54,7 +54,14 @@ function default_terms(): array
     ];
 }
 
+require_once __DIR__ . '/seed_extended.php';
+
 function seed_rate_items(): array
+{
+    return array_merge(seed_rate_items_base(), seed_rate_items_extended());
+}
+
+function seed_rate_items_base(): array
 {
     // [division, category, name, unit, rate, description]  — INDICATIVE PLACEHOLDER RATES: edit to your actual costs.
     return [

@@ -1,4 +1,14 @@
 # Block direct web access to internal PHP files and data. index.php stays public.
-<FilesMatch "^(config|lib|setup)\.php$">
+<FilesMatch "^(config|lib|setup|migrate|projects|core|seed_extended)\.php$">
     Require all denied
 </FilesMatch>
+
+# Let the Authorization header reach PHP (needed for MCP / API tokens on some Apache + FastCGI hosts)
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{HTTP:Authorization} ^(.+)$
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+</IfModule>
+<IfModule mod_setenvif.c>
+    SetEnvIfNoCase Authorization "(.+)" HTTP_AUTHORIZATION=$1
+</IfModule>

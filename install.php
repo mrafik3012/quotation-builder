@@ -3,6 +3,7 @@ declare(strict_types=1);
 /**
  * One-time installer. Open https://your-domain/install.php, fill the form, then DELETE this file.
  * CLI (for testing):  php install.php --sqlite --email=a@b.com --password=secret123
+ *                     php install.php --host=localhost --dbname=x --dbuser=u --dbpass=p --email=a@b.com --password=secret123
  */
 require __DIR__ . '/api/setup.php';
 
@@ -52,11 +53,11 @@ function do_install(array $in): string
 }
 
 if ($cli) {
-    $o = getopt('', ['sqlite', 'email:', 'password:']);
+    $o = getopt('', ['sqlite', 'email:', 'password:', 'host:', 'dbname:', 'dbuser:', 'dbpass:']);
     echo do_install([
         'driver' => isset($o['sqlite']) ? 'sqlite' : 'mysql', 'email' => $o['email'] ?? 'admin@example.com',
         'password' => $o['password'] ?? 'changeme123', 'company' => 'Infraura', 'name' => 'Admin',
-        'host' => 'localhost', 'dbname' => '', 'dbuser' => '', 'dbpass' => '',
+        'host' => $o['host'] ?? 'localhost', 'dbname' => $o['dbname'] ?? '', 'dbuser' => $o['dbuser'] ?? '', 'dbpass' => $o['dbpass'] ?? '',
     ]) . "\n";
     exit;
 }
