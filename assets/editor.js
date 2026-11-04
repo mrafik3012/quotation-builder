@@ -80,6 +80,7 @@ function drawEditor() {
    ${divChip(Q.division)} ${isNew ? '' : statusChip(Q.status)}</div>
   <div class="row noprint" style="margin-bottom:14px">
    ${ro ? '' : '<button class="btn pri" data-act="save">Save</button>'}
+   ${Q.division === 'roofing' && !ro ? '<button class="btn" data-act="roofcalc">Roofing calculator</button>' : ''}
    ${isNew ? '' : `<a class="btn" href="#/quotes/${Q.id}/print">Preview / PDF</a>`}
    ${isNew || ro ? '' : `<select id="stsel" style="width:auto"><option disabled>Status…</option>${['draft', 'sent', 'accepted', 'rejected'].map(k => `<option value="${k}" ${Q.status === k ? 'selected' : ''}>${STATUS_LABEL[k]}</option>`).join('')}</select>`}
    <span class="sp"></span>
@@ -232,6 +233,7 @@ function wireEditor() {
     const a = t.dataset.act, sec = t.closest('.sec'), si = sec ? +sec.dataset.s : -1;
     if (a === 'latest') { e.preventDefault(); const l = Q.revisions.find(r => r.status !== 'superseded') || Q.revisions[0]; if (l) location.hash = '#/quotes/' + l.id; }
     else if (a === 'save') guard(saveQuote);
+    else if (a === 'roofcalc') openRoofCalc();
     else if (a === 'addsec') { Q.data.sections.push({ title: '', items: [] }); markDirty(); drawSections(); }
     else if (a === 'delsec') { const s = Q.data.sections[si]; if (!s.items.length || confirmBox('Remove this section and its items?')) { Q.data.sections.splice(si, 1); markDirty(); drawSections(); } }
     else if (a === 'additem') { Q.data.sections[si].items.push({ desc: '', unit: '', qty: 1, rate: '' }); markDirty(); drawSections(); const ts = $$('#sections .sec')[si].querySelectorAll('textarea'); if (ts.length) ts[ts.length - 1].focus(); }

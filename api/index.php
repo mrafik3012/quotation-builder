@@ -287,6 +287,7 @@ function clean_quote_input(array $d, ?string $existingDivision = null): array
         'site_address' => str($data['site_address'] ?? '', 500),
         'area_sqft' => num($data['area_sqft'] ?? 0),
         'pmc' => is_array($data['pmc'] ?? null) ? $data['pmc'] : null,
+        'roofcalc' => clean_roofcalc($data['roofcalc'] ?? null),
     ];
     $c = is_array($d['client'] ?? null) ? $d['client'] : [];
     $client = ['name' => str($c['name'] ?? '', 190), 'contact_person' => str($c['contact_person'] ?? '', 120), 'phone' => str($c['phone'] ?? '', 40),
@@ -294,6 +295,20 @@ function clean_quote_input(array $d, ?string $existingDivision = null): array
     $date = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($d['quote_date'] ?? '')) ? $d['quote_date'] : date('Y-m-d');
     $valid = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($d['valid_until'] ?? '')) ? $d['valid_until'] : date('Y-m-d', strtotime($date . ' +' . (int)(get_setting('validity_days') ?: 15) . ' days'));
     return [$division, $title, $clean, $client, $date, $valid, (int)($d['client_id'] ?? 0) ?: null];
+}
+
+function clean_roofcalc($r): ?array
+{
+    if (!is_array($r)) return null;
+    $out = [];
+    foreach (['type', 'gutter'] as $k) $out[$k] = str($r[$k] ?? '', 10);
+    foreach (['len', 'wid', 'slope', 'eave', 'gable', 'height', 'waste', 'pspace', 'purlinkg', 'framekg', 'screws', 'turbo', 'sky'] as $k) $out[$k] = isset($r[$k]) && $r[$k] !== '' ? num($r[$k]) : '';
+    $out['mats'] = array_values(array_filter(array_map(fn($x) => str($x, 12), is_array($r['mats'] ?? null) ? $r['mats'] : []), 'strlen'));
+    $out['custom'] = [];
+    foreach ((is_array($r['custom'] ?? null) ? $r['custom'] : []) as $k => $v) {
+        if ($v !== '' && is_numeric($v)) $out['custom'][str($k, 20)] = (float)$v;
+    }
+    return $out;
 }
 
 function resolve_client(?int $clientId, array $client): array
