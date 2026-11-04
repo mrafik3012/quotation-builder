@@ -22,6 +22,8 @@ try {
     if (!$share) fail('This link is not valid or has been withdrawn', 404);
     $row = q('SELECT * FROM quotes WHERE quote_no = ? AND is_latest = 1', [$share['quote_no']])->fetch();
     if (!$row) fail('Quotation not found', 404);
+    // links stop working 60 days after the quote's validity ends (accepted quotes stay viewable for the client's records)
+    if ($row['status'] !== 'accepted' && $row['valid_until'] < date('Y-m-d', strtotime('-60 days'))) fail('This link has expired. Please ask us for a fresh quotation.', 410);
     // a draft (e.g. a revision being prepared) is never shown to the client
     $available = in_array($row['status'], ['sent', 'accepted', 'rejected'], true);
 

@@ -103,7 +103,7 @@ function drawEditor() {
   ${isNew ? tplBar() : ''}
   <div class="grid2">
    <div class="card"><h3>Client</h3>
-    <label class="f"><span>Saved client</span><select id="clientsel"><option value="">— Type new client below —</option>${S.clients.map(c => `<option value="${c.id}" ${Q.client_id == c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+    <label class="f"><span>Saved client <input id="clientq" placeholder="search all clients…" style="display:inline-block;width:170px;padding:2px 6px;margin-left:6px;font-size:12px"></span><select id="clientsel"><option value="">— Type new client below —</option>${clientOptions()}</select></label>
     <label class="f"><span>Client name *</span><input data-b="client.name" value="${esc(Q.client.name)}"></label>
     <div class="grid2"><label class="f"><span>Contact person</span><input data-b="client.contact_person" value="${esc(Q.client.contact_person)}"></label><label class="f"><span>Phone</span><input data-b="client.phone" value="${esc(Q.client.phone)}"></label>
     <label class="f"><span>Email</span><input data-b="client.email" value="${esc(Q.client.email)}"></label><label class="f"><span>GSTIN</span><input data-b="client.gstin" value="${esc(Q.client.gstin)}"></label></div>
@@ -141,7 +141,7 @@ function drawEditor() {
   ${activityHtml()}
   ${Q.revisions && Q.revisions.length > 1 ? `<div class="card noprint"><h3>Revision history</h3>${Q.revisions.map(r => `<div class="row" style="margin-bottom:4px"><a href="#/quotes/${r.id}">Rev ${r.rev}</a>${statusChip(r.status)}<span class="muted small">${esc(r.updated_at)}</span><span class="sp"></span><b>${inr0(r.total)}</b></div>`).join('')}</div>` : ''}`;
   drawPmc(); drawSections(); drawOptions(); drawPay(); recalc();
-  wireEditor();
+  wireEditor(); wireClientSearch();
 }
 
 function shareUrl(tok) { return location.href.split('#')[0].replace(/[^/]*$/, '') + 'view.html?t=' + tok; }
@@ -198,6 +198,20 @@ function saveTemplate() {
     await api('templates', 'POST', { name: name.trim(), division: Q.division, data: { sections: d.sections, terms: d.terms, scope: d.scope, notes: d.notes } });
     S.templates = await api('templates'); toast('Template saved', 'ok');
   });
+}
+
+function clientOptions(list) {
+  const all = (list || S.clients).slice();
+  if (Q.client_id && !all.find(c => c.id == Q.client_id)) all.unshift({ id: Q.client_id, name: Q.client.name || 'Client #' + Q.client_id });
+  return all.map(c => `<option value="${c.id}" ${Q.client_id == c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+}
+function wireClientSearch() {
+  const inp = $('#clientq'); if (!inp) return; let tm;
+  inp.oninput = () => { clearTimeout(tm); tm = setTimeout(() => guard(async () => {
+    const term = inp.value.trim(); const r = await api(`clients&per=30${term ? '&q=' + encodeURIComponent(term) : ''}`);
+    r.rows.forEach(c => { if (!S.clients.find(x => x.id === c.id)) S.clients.push(c); });
+    $('#clientsel').innerHTML = '<option value="">— Type new client below —</option>' + clientOptions(r.rows);
+  }), 250); };
 }
 
 function drawPmc() {
@@ -432,10 +446,10 @@ async function saveQuote() {
   const body = { division: Q.division, client_id: Q.client_id || null, client: Q.client, title: Q.title, quote_date: Q.quote_date, valid_until: Q.valid_until, data: d, updated_at: Q.updated_at };
   if (!Q.id) {
     const r = await api('quotes', 'POST', body);
-    window.__dirty = false; S.clients = await api('clients'); toast('Saved as ' + r.quote_no, 'ok'); location.hash = '#/quotes/' + r.id;
+    window.__dirty = false; await refreshClients(); toast('Saved as ' + r.quote_no, 'ok'); location.hash = '#/quotes/' + r.id;
   } else {
     const r = await api('quotes/' + Q.id, 'PUT', body);
-    window.__dirty = false; Q.client_id = r.client_id || Q.client_id; Q.updated_at = r.updated_at; S.clients = await api('clients'); toast('Saved', 'ok');
+    window.__dirty = false; Q.client_id = r.client_id || Q.client_id; Q.updated_at = r.updated_at; await refreshClients(); toast('Saved', 'ok');
   }
   return true;
 }

@@ -149,7 +149,7 @@ function route(string $m, string $a, ?string $b, ?string $c): void
             json_out([
                 'user' => $user,
                 'settings' => all_settings($user['role'] === 'admin'),
-                'clients' => q('SELECT id,name,contact_person,phone,email,address,gstin FROM clients ORDER BY name')->fetchAll(),
+                'clients' => array_reverse(q('SELECT id,name,contact_person,phone,email,address,gstin FROM clients ORDER BY id DESC LIMIT 300')->fetchAll()),   // the most recent; the editor searches the rest on demand
                 'rates' => rates_list(),
                 'templates' => templates_list(),
                 'divisions' => DIVISIONS,
@@ -246,7 +246,7 @@ function route(string $m, string $a, ?string $b, ?string $c): void
             break;
 
         case 'clients':
-            clients_route($m, $b);
+            clients_route($m, $b, $c, $user);
             break;
 
         case 'rates':
@@ -322,26 +322,73 @@ function route(string $m, string $a, ?string $b, ?string $c): void
     fail('Not found', 404);
 }
 
-function clients_route(string $m, ?string $b): void
+function clients_route(string $m, ?string $b, ?string $c, array $user): void
 {
-    if ($m === 'GET') {
-        json_out(q('SELECT c.*, (SELECT COUNT(*) FROM quotes x WHERE x.client_id = c.id AND x.is_latest = 1) AS quote_count FROM clients c ORDER BY c.name')->fetchAll());
+    $sel = 'SELECT c.*, (SELECT COUNT(*) FROM quotes x WHERE x.client_id = c.id AND x.is_latest = 1) AS quote_count FROM clients c';
+    if ($m === 'GET' && $b === null) {
+        $w = ''; $p = [];
+        if (!empty($_GET['q'])) {
+            $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], trim((string)$_GET['q'])) . '%';
+            $w = ' WHERE c.name LIKE ? OR c.contact_person LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR c.gstin LIKE ?'; $p = [$like, $like, $like, $like, $like];
+        }
+        if (isset($_GET['per'])) {   // paginated: {rows,total}
+            $per = max(1, min(200, (int)$_GET['per'])); $page = max(1, (int)($_GET['page'] ?? 1));
+            $total = (int)q('SELECT COUNT(*) AS n FROM clients c' . $w, $p)->fetch()['n'];
+            $order = !empty($_GET['recent']) ? 'c.id DESC' : 'c.name';
+            json_out(['rows' => q($sel . $w . " ORDER BY $order LIMIT " . $per . ' OFFSET ' . (($page - 1) * $per), $p)->fetchAll(), 'total' => $total, 'page' => $page, 'per' => $per]);
+        }
+        json_out(q($sel . $w . ' ORDER BY c.name LIMIT 5000', $p)->fetchAll());
     }
-    if ($m === 'POST') {
+    if ($m === 'POST' && $b === null) {
         $f = client_fields(body());
         q('INSERT INTO clients (name,contact_person,phone,email,address,gstin,created_at) VALUES (?,?,?,?,?,?,?)', array_merge($f, [now()]));
         json_out(['id' => (int)db()->lastInsertId()], 201);
     }
-    if ($m === 'PUT' && $b !== null) {
+    $cid = $b !== null && ctype_digit($b) ? (int)$b : 0;
+    $cl = $cid ? q('SELECT * FROM clients WHERE id = ?', [$cid])->fetch() : null;
+    if ($b !== null && !$cl) fail('Client not found', 404);
+    if ($m === 'PUT' && $cl) {
         $f = client_fields(body());
-        q('UPDATE clients SET name=?,contact_person=?,phone=?,email=?,address=?,gstin=? WHERE id=?', array_merge($f, [(int)$b]));
+        q('UPDATE clients SET name=?,contact_person=?,phone=?,email=?,address=?,gstin=? WHERE id=?', array_merge($f, [$cid]));
         json_out(['ok' => true]);
     }
-    if ($m === 'DELETE' && $b !== null) {
-        $n = (int)q('SELECT COUNT(*) AS n FROM quotes WHERE client_id = ?', [(int)$b])->fetch()['n'];
+    if ($m === 'GET' && $cl && $c === 'export') {          // privacy: everything held about this client, as a download
+        require_admin();
+        $quotes = q('SELECT * FROM quotes WHERE client_id = ? ORDER BY id', [$cid])->fetchAll(); $nos = array_values(array_unique(array_column($quotes, 'quote_no')));
+        $out = ['exported_at' => now(), 'client' => $cl, 'quotes' => array_map(fn($r) => quote_row_out($r, true), $quotes), 'events' => [], 'projects' => []];
+        foreach ($nos as $no) {
+            foreach (q('SELECT type,detail,actor,ip,created_at FROM quote_events WHERE quote_no = ? ORDER BY id', [$no])->fetchAll() as $ev) $out['events'][] = ['quote_no' => $no] + $ev;
+            $pr = q('SELECT id FROM projects WHERE quote_no = ?', [$no])->fetch(); if ($pr) { $d = project_detail((int)$pr['id']); unset($d['quote']); $out['projects'][] = $d; }
+        }
+        audit($user, 'client.export', '#' . $cid . ' ' . $cl['name']);
+        header('Content-Type: application/json; charset=utf-8'); header('Content-Disposition: attachment; filename="client-' . $cid . '-data.json"');
+        echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR); exit;
+    }
+    if ($m === 'POST' && $cl && $c === 'anonymize') {      // privacy: erase personal data, keeping what tax law requires us to keep
+        require_admin();
+        if (empty(body()['confirm'])) fail('Confirmation required');
+        $financial = q("SELECT 1 FROM quotes WHERE client_id = ? AND status = 'accepted' LIMIT 1", [$cid])->fetch() || q('SELECT 1 FROM projects WHERE client_id = ? LIMIT 1', [$cid])->fetch();
+        db()->beginTransaction();
+        $quotes = q('SELECT id, quote_no, status, client_json FROM quotes WHERE client_id = ?', [$cid])->fetchAll();
+        foreach ($quotes as $qr) {
+            $keep = $financial && ($qr['status'] === 'accepted' || q('SELECT 1 FROM projects WHERE quote_no = ?', [$qr['quote_no']])->fetch());
+            $j = json_decode((string)$qr['client_json'], true) ?: [];
+            if ($keep) $j = array_merge($j, ['phone' => '', 'email' => '', 'contact_person' => '']);          // invoices keep name / address / GSTIN
+            else $j = ['name' => $financial ? ($j['name'] ?? 'Erased client') : 'Erased client #' . $cid, 'contact_person' => '', 'phone' => '', 'email' => '', 'address' => '', 'gstin' => ''];
+            q('UPDATE quotes SET client_json = ? WHERE id = ?', [json_encode($j, JSON_UNESCAPED_UNICODE), $qr['id']]);
+            if (!$keep) { q('DELETE FROM quote_events WHERE quote_no = ?', [$qr['quote_no']]); q('DELETE FROM quote_shares WHERE quote_no = ?', [$qr['quote_no']]); }
+        }
+        if ($financial) q("UPDATE clients SET contact_person = '', phone = '', email = '', anonymized = 1 WHERE id = ?", [$cid]);
+        else q("UPDATE clients SET name = ?, contact_person = '', phone = '', email = '', address = '', gstin = '', anonymized = 1 WHERE id = ?", ['Erased client #' . $cid, $cid]);
+        db()->commit();
+        audit($user, 'client.anonymize', '#' . $cid . ($financial ? ' (partial - tax records retained)' : ' (full)'));
+        json_out(['ok' => true, 'mode' => $financial ? 'partial' : 'full', 'note' => $financial ? 'Phone, e-mail and contact person were erased. The name, address and GSTIN stay on accepted quotes, projects and invoices because tax law requires invoices to be kept.' : 'All personal details were erased.']);
+    }
+    if ($m === 'DELETE' && $cl) {
+        $n = (int)q('SELECT COUNT(*) AS n FROM quotes WHERE client_id = ?', [$cid])->fetch()['n'];
         if ($n > 0) fail("This client has $n quote(s) and cannot be deleted");
-        if (q('SELECT 1 FROM projects WHERE client_id = ?', [(int)$b])->fetch()) fail('This client has a project and cannot be deleted');
-        q('DELETE FROM clients WHERE id = ?', [(int)$b]);
+        if (q('SELECT 1 FROM projects WHERE client_id = ?', [$cid])->fetch()) fail('This client has a project and cannot be deleted');
+        q('DELETE FROM clients WHERE id = ?', [$cid]);
         json_out(['ok' => true]);
     }
     fail('Not found', 404);
@@ -429,9 +476,14 @@ function quotes_route(string $m, ?string $b, ?string $c, array $user): void
             $where[] = '(quote_no LIKE ? OR title LIKE ? OR client_json LIKE ?)';
             array_push($p, $like, $like, $like);
         }
-        $sql = 'SELECT id,quote_no,rev,is_latest,division,client_id,client_json,title,status,quote_date,valid_until,subtotal,discount,tax,round_off,total,created_at,updated_at FROM quotes'
-            . ($where ? ' WHERE ' . implode(' AND ', $where) : '') . ' ORDER BY id DESC LIMIT 500';
-        json_out(array_map(fn($r) => quote_row_out($r, false), q($sql, $p)->fetchAll()));
+        $cols = 'id,quote_no,rev,is_latest,division,client_id,client_json,title,status,quote_date,valid_until,subtotal,discount,tax,round_off,total,created_at,updated_at';
+        $wh = $where ? ' WHERE ' . implode(' AND ', $where) : '';
+        if (isset($_GET['per'])) {   // paginated: {rows,total}
+            $per = max(1, min(200, (int)$_GET['per'])); $page = max(1, (int)($_GET['page'] ?? 1));
+            $total = (int)q('SELECT COUNT(*) AS n FROM quotes' . $wh, $p)->fetch()['n'];
+            json_out(['rows' => array_map(fn($r) => quote_row_out($r, false), q("SELECT $cols FROM quotes" . $wh . ' ORDER BY id DESC LIMIT ' . $per . ' OFFSET ' . (($page - 1) * $per), $p)->fetchAll()), 'total' => $total, 'page' => $page, 'per' => $per]);
+        }
+        json_out(array_map(fn($r) => quote_row_out($r, false), q("SELECT $cols FROM quotes" . $wh . ' ORDER BY id DESC LIMIT 500', $p)->fetchAll()));
     }
 
     if ($m === 'POST' && $b === null) {

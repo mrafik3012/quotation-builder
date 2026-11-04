@@ -103,6 +103,7 @@ async function init() {
     $('#app').innerHTML = `<div class="login"><img class="logo" src="assets/logo.png" alt="Infraura"><h1>Quotation Builder</h1><p class="muted">${esc(e.message)}</p></div>`;
   }
 }
+async function refreshClients() { const r = await api('clients&per=300&recent=1'); S.clients = r.rows.reverse(); }
 async function loadBootstrap() {
   const b = await api('bootstrap');
   S.user = b.user; S.settings = b.settings; S.clients = b.clients; S.rates = b.rates; S.templates = b.templates || [];
@@ -268,48 +269,65 @@ async function pageQuotes() {
    <label class="row small" style="gap:5px"><input type="checkbox" id="qa" ${QF.all ? 'checked' : ''}> Show all revisions</label>
    ${clientName ? `<span class="chip div">Client: ${esc(clientName)} <a href="#" id="cc">✕</a></span>` : ''}</div>
    <div id="ql"><p class="muted">Loading…</p></div></div>`;
-  const load = async () => {
-    const qs = new URLSearchParams();
+  const params = () => { const qs = new URLSearchParams();
     if (QF.q) qs.set('q', QF.q); if (QF.status) qs.set('status', QF.status);
-    if (QF.division) qs.set('division', QF.division); if (QF.all) qs.set('all', '1'); if (QF.client_id) qs.set('client_id', QF.client_id);
-    const rows = await api('quotes' + (qs.toString() ? '&' + qs : '')); QF.rows = rows;
-    $('#ql').innerHTML = quoteTable(rows) + (rows.length ? `<p class="muted small" style="margin:10px 0 0">${rows.length} quote${rows.length === 1 ? '' : 's'} · total ${inr0(rows.filter(r => r.status !== 'superseded').reduce((a, r) => a + r.total, 0))}</p>` : '');
+    if (QF.division) qs.set('division', QF.division); if (QF.all) qs.set('all', '1'); if (QF.client_id) qs.set('client_id', QF.client_id); return qs; };
+  let page = 1, shown = [], total = 0;
+  const paint = () => {
+    $('#ql').innerHTML = quoteTable(shown) + (shown.length ? `<p class="muted small" style="margin:10px 0 0">Showing ${shown.length} of ${total} quote${total === 1 ? '' : 's'} · total of those shown ${inr0(shown.filter(r => r.status !== 'superseded').reduce((a, r) => a + r.total, 0))}</p>${shown.length < total ? '<div class="row" style="margin-top:8px"><button class="btn" id="qmore" type="button">Load more</button></div>' : ''}` : '');
+    const mb = $('#qmore'); if (mb) mb.onclick = () => guard(async () => { page++; await load(true); });
+  };
+  const load = async (more) => {
+    if (!more) { page = 1; shown = []; }
+    const qs = params(); qs.set('per', '50'); qs.set('page', String(page));
+    const r = await api('quotes&' + qs); total = r.total; shown = shown.concat(r.rows); QF.rows = shown; paint();
   };
   let tm; const reload = () => { clearTimeout(tm); tm = setTimeout(() => guard(load), 200); };
   $('#qs').oninput = e => { QF.q = e.target.value; reload(); };
   $('#qd').onchange = e => { QF.division = e.target.value; reload(); };
   $('#qst').onchange = e => { QF.status = e.target.value; reload(); };
   $('#qa').onchange = e => { QF.all = e.target.checked; reload(); };
-  $('#qx').onclick = () => {
-    const rows = QF.rows || [], head = ['quote_no', 'rev', 'division', 'client', 'title', 'status', 'quote_date', 'valid_until', 'subtotal', 'discount', 'gst', 'total'];
+  $('#qx').onclick = () => guard(async () => {
+    let rows = [], pg = 1, tot = 1; const qs = params(); qs.set('per', '200');
+    while (rows.length < tot && pg <= 100) { qs.set('page', String(pg++)); const r = await api('quotes&' + qs); tot = r.total; rows = rows.concat(r.rows); if (!r.rows.length) break; }
+    const head = ['quote_no', 'rev', 'division', 'client', 'title', 'status', 'quote_date', 'valid_until', 'subtotal', 'discount', 'gst', 'total'];
     download('quotes.csv', [head.join(',')].concat(rows.map(r => [r.quote_no, r.rev, DIVS[r.division], (r.client || {}).name, r.title, r.status, r.quote_date, r.valid_until, r.subtotal, r.discount, r.tax, r.total].map(csvCell).join(','))).join('\n'));
-  };
+  });
   const cc = $('#cc'); if (cc) cc.onclick = e => { e.preventDefault(); QF.client_id = ''; pageQuotes(); };
   await load();
 }
 
 /* ---------- clients ---------- */
 async function pageClients() {
-  const rows = await api('clients'); S.clients = rows;
-  const v = $('#view');
+  const v = $('#view'), admin = S.user.role === 'admin';
   v.innerHTML = `<div class="page-head"><h1>Clients</h1><button class="btn pri" data-act="new">+ New client</button></div>
-  <div class="card"><input id="cs" placeholder="Search clients…" style="max-width:280px;margin-bottom:12px"><div class="scroll"><table class="tbl"><thead><tr><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>GSTIN</th><th class="r">Quotes</th><th></th></tr></thead><tbody id="cb"></tbody></table></div></div>`;
+  <div class="card"><input id="cs" placeholder="Search name, phone, e-mail, GSTIN…" style="max-width:320px;margin-bottom:12px"><div class="scroll"><table class="tbl"><thead><tr><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>GSTIN</th><th class="r">Quotes</th><th></th></tr></thead><tbody id="cb"></tbody></table></div><div id="cm" class="row" style="margin-top:10px"></div></div>`;
+  let rows = [], page = 1, total = 0, term = '';
   const draw = () => {
-    const f = $('#cs').value.toLowerCase();
-    $('#cb').innerHTML = rows.filter(c => !f || (c.name + c.phone + c.email + c.contact_person).toLowerCase().includes(f)).map(c => `<tr>
-    <td><b>${esc(c.name)}</b><div class="muted small">${esc(c.address)}</div></td><td>${esc(c.contact_person)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td><td>${esc(c.gstin)}</td>
-    <td class="r"><a href="#/quotes" data-act="q" data-id="${c.id}">${c.quote_count}</a></td>
-    <td class="nw r"><button class="btn sm" data-act="edit" data-id="${c.id}">Edit</button> <button class="btn sm dng" data-act="del" data-id="${c.id}">Delete</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No clients yet.</td></tr>';
+    $('#cb').innerHTML = rows.map(c => `<tr><td><b>${esc(c.name)}</b>${c.anonymized ? ' <span class="chip draft">data erased</span>' : ''}<div class="muted small">${esc(c.address)}</div></td><td>${esc(c.contact_person)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td><td>${esc(c.gstin)}</td>
+      <td class="r"><a href="#/quotes" data-act="q" data-id="${c.id}">${c.quote_count}</a></td>
+      <td class="nw r"><button class="btn sm" data-act="edit" data-id="${c.id}">Edit</button> ${admin ? `<button class="btn sm" data-act="export" data-id="${c.id}" title="Download everything held about this client">Export data</button> <button class="btn sm" data-act="erase" data-id="${c.id}" title="Erase personal details (privacy request)">Erase data</button> ` : ''}<button class="btn sm dng" data-act="del" data-id="${c.id}">Delete</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No clients found.</td></tr>';
+    $('#cm').innerHTML = `<span class="muted small">Showing ${rows.length} of ${total}</span>${rows.length < total ? '<button class="btn" id="cmore" type="button">Load more</button>' : ''}`;
+    const mb = $('#cmore'); if (mb) mb.onclick = () => guard(async () => { page++; await load(true); });
   };
-  draw(); $('#cs').oninput = draw;
+  const load = async more => {
+    if (!more) { page = 1; rows = []; }
+    const r = await api(`clients&per=50&page=${page}${term ? '&q=' + encodeURIComponent(term) : ''}`); total = r.total; rows = rows.concat(r.rows);
+    rows.forEach(c => { if (!S.clients.find(x => x.id === c.id)) S.clients.push(c); });
+    draw();
+  };
+  let tm; $('#cs').oninput = e => { term = e.target.value.trim(); clearTimeout(tm); tm = setTimeout(() => guard(load), 250); };
   v.onclick = e => {
     const t = e.target.closest('[data-act]'); if (!t) return;
     const c = rows.find(x => x.id == t.dataset.id);
     if (t.dataset.act === 'new') clientModal(null);
     if (t.dataset.act === 'edit') clientModal(c);
     if (t.dataset.act === 'q') { QF.client_id = c.id; QF.all = false; QF.q = QF.status = QF.division = ''; }
-    if (t.dataset.act === 'del' && confirmBox(`Delete client "${c.name}"?`)) guard(async () => { await api('clients/' + c.id, 'DELETE'); toast('Client deleted', 'ok'); pageClients(); });
+    if (t.dataset.act === 'export') window.location.href = `api/index.php?r=clients/${c.id}/export`;
+    if (t.dataset.act === 'erase' && confirmBox(`Erase personal details of "${c.name}"?\n\nPhone, e-mail and contact person are removed. If the client has accepted quotes or invoices, their name, address and GSTIN are kept because tax law requires it. This cannot be undone.`)) guard(async () => { const r = await api(`clients/${c.id}/anonymize`, 'POST', { confirm: true }); alert(r.note); load(); });
+    if (t.dataset.act === 'del' && confirmBox(`Delete client "${c.name}"?`)) guard(async () => { await api('clients/' + c.id, 'DELETE'); toast('Client deleted', 'ok'); load(); });
   };
+  await load();
 }
 function clientModal(c, onSaved) {
   c = c || {};
@@ -326,7 +344,7 @@ function clientModal(c, onSaved) {
     guard(async () => {
       let id = c.id;
       if (c.id) await api('clients/' + c.id, 'PUT', body); else id = (await api('clients', 'POST', body)).id;
-      S.clients = await api('clients'); m.close(); toast('Client saved', 'ok');
+      await refreshClients(); m.close(); toast('Client saved', 'ok');
       if (onSaved) onSaved(id); else pageClients();
     });
   };
