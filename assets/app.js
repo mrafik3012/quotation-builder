@@ -11,7 +11,9 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const n = v => { const x = parseFloat(v); return isNaN(x) ? 0 : x; };
-const r2 = x => Math.round((x + Number.EPSILON) * 100) / 100;
+// Money rounding: half away from zero on the exact decimal value (floating-point noise removed first).
+// api/lib.php money() is the identical algorithm - totals must match to the paisa on screen, in print and in the database.
+const r2 = x => { const y = Math.abs(x) * 100; return (x < 0 ? -1 : 1) * Math.floor(Math.round(y * 1e4) / 1e4 + 0.5) / 100; };
 const fmt = x => new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x || 0);
 const inr = x => '₹ ' + fmt(x);
 const inr0 = x => '₹ ' + new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(x || 0);

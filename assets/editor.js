@@ -59,11 +59,12 @@ async function pageEditor(id, div) {
 function totals(d) {
   let sub = 0;
   effSections(d).forEach(s => s.items.forEach(it => { sub += r2(n(it.qty) * n(it.rate)); }));
+  sub = r2(sub);
   let disc = d.discount.type === 'flat' ? n(d.discount.value) : sub * n(d.discount.value) / 100;
   disc = r2(Math.min(Math.max(disc, 0), sub));
   const taxable = sub - disc, tax = r2(taxable * n(d.tax_rate) / 100);
   let total = taxable + tax, ro = 0;
-  if (d.round_off) { const r = Math.round(total); ro = r2(r - total); total = r; }
+  if (d.round_off) { const r = Math.floor(r2(total) + 0.5); ro = r2(r - total); total = r; }
   return { sub: r2(sub), disc: r2(disc), taxable: r2(taxable), tax, ro, total: r2(total) };
 }
 function pmcFee() {

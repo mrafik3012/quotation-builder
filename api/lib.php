@@ -137,6 +137,13 @@ function effective_sections(array $data): array
     return $secs;
 }
 
+/** Money rounding: half away from zero on the exact decimal value. Identical to r2() in assets/app.js. */
+function money(float $x): float
+{
+    $y = abs($x) * 100;
+    return ($x < 0 ? -1 : 1) * floor(round($y, 4) + 0.5) / 100;
+}
+
 const MAX_AMOUNT = 10000000000.0; // 1,000 crore per line / quote: far beyond any real job, well inside DECIMAL(14,2)
 
 /** Sliding-window limiter stored in the DB. Fails with 429 when the key exceeds $max hits in $window seconds. */
@@ -177,23 +184,24 @@ function compute_totals(array $data): array
     $sub = 0.0;
     foreach (effective_sections($data) as $s) {
         foreach (($s['items'] ?? []) as $it) {
-            $sub += round(num($it['qty'] ?? 0) * num($it['rate'] ?? 0), 2);
+            $sub += money(num($it['qty'] ?? 0) * num($it['rate'] ?? 0));
         }
     }
+    $sub = money($sub);
     $d = $data['discount'] ?? ['type' => 'percent', 'value' => 0];
     $dv = num($d['value'] ?? 0);
     $disc = (($d['type'] ?? 'percent') === 'flat') ? $dv : $sub * $dv / 100;
-    $disc = round(min(max($disc, 0.0), $sub), 2);
+    $disc = money(min(max($disc, 0.0), $sub));
     $taxable = $sub - $disc;
-    $tax = round($taxable * num($data['tax_rate'] ?? 18) / 100, 2);
+    $tax = money($taxable * num($data['tax_rate'] ?? 18) / 100);
     $total = $taxable + $tax;
     $round = 0.0;
     if (!empty($data['round_off'])) {
-        $r = round($total);
-        $round = round($r - $total, 2);
+        $r = floor(money($total) + 0.5);
+        $round = money($r - $total);
         $total = $r;
     }
-    return [round($sub, 2), round($disc, 2), $tax, $round, round($total, 2)];
+    return [money($sub), money($disc), $tax, $round, money($total)];
 }
 
 function financial_year(string $date): string
