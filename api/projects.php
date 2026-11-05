@@ -112,6 +112,18 @@ function variation_milestone(int $projectId, array $v): int
     return (int)db()->lastInsertId();
 }
 
+/** The project's private client-portal token (created on first use). */
+function portal_token_for(int $projectId, bool $rotate = false): string
+{
+    $row = q('SELECT portal_token FROM projects WHERE id = ?', [$projectId])->fetch();
+    if (!$row) fail('Project not found', 404);
+    if (!$rotate && $row['portal_token']) return (string)$row['portal_token'];
+    $tok = bin2hex(random_bytes(16));
+    q('UPDATE projects SET portal_token = ? WHERE id = ?', [$tok, $projectId]);
+    return $tok;
+}
+function portal_link(string $tok): string { return app_base_url() . '/portal.html?t=' . $tok; }
+
 function projects_route(string $m, array $p, array $user): void
 {
     $id = isset($p[0]) && ctype_digit($p[0]) ? (int)$p[0] : null;
@@ -253,6 +265,23 @@ function projects_route(string $m, array $p, array $user): void
             json_out(['id' => $rid], 201);
         }
         if ($m === 'DELETE' && $sid !== null) { if (($user['role'] ?? '') !== 'admin') fail('Only an admin can delete a recorded payment', 403); audit($user, 'payment.delete', 'receipt #' . $sid . ' project #' . $id); q('DELETE FROM project_receipts WHERE id = ? AND project_id = ?', [$sid, $id]); json_out(['ok' => true]); }
+    }
+
+    if ($sub === 'portal') {   // admin: manage the client's private progress link
+        if ($m === 'POST' && ($p[2] ?? '') === 'email') {
+            if (!mail_configured()) fail('E-mail is not set up yet. Add your mail account under Settings > E-mail.');
+            $pr = q('SELECT p.name, c.name AS cname, c.email, c.contact_person FROM projects p LEFT JOIN clients c ON c.id = p.client_id WHERE p.id = ?', [$id])->fetch();
+            $to = strtolower(str(body()['to'] ?? '', 190)) ?: strtolower((string)($pr['email'] ?? ''));
+            if (!filter_var($to, FILTER_VALIDATE_EMAIL)) fail('Enter a valid e-mail address for the client');
+            $link = portal_link(portal_token_for($id)); $e = fn($x) => htmlspecialchars((string)$x, ENT_QUOTES, 'UTF-8');
+            [$ok, $err] = send_mail($to, 'Track your project: ' . $pr['name'], email_html('Your project portal', '<p>Dear ' . $e($pr['contact_person'] ?: $pr['cname']) . ',</p><p>You can follow the progress of <b>' . $e($pr['name']) . '</b> - site updates with photos, payment schedule and amounts received - at any time using your private link.</p>', ['Open project portal', $link]));
+            if (!$ok) fail('The e-mail could not be sent: ' . $err);
+            audit($GLOBALS['CURRENT_USER'] ?? [], 'portal.email', $pr['name'] . ' -> ' . $to);
+            json_out(['ok' => true, 'to' => $to]);
+        }
+        if ($m === 'POST') { $tok = portal_token_for($id, !empty(body()['rotate'])); audit($GLOBALS['CURRENT_USER'] ?? [], 'portal.link', 'project ' . $id . (!empty(body()['rotate']) ? ' (new link)' : '')); json_out(['link' => portal_link($tok)]); }
+        if ($m === 'DELETE') { q('UPDATE projects SET portal_token = NULL WHERE id = ?', [$id]); audit($GLOBALS['CURRENT_USER'] ?? [], 'portal.revoke', 'project ' . $id); json_out(['ok' => true]); }
+        fail('Not found', 404);
     }
 
     if ($sub === 'variations') {

@@ -197,6 +197,19 @@ const ok = (c, m) => { if (c) { passed++; console.log('  ok   ' + m); } else { f
   if (axeSrc) { await page.evaluate(axeSrc); const r = await page.evaluate(async () => await axe.run(document, { runOnly: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] })); const bad = r.violations.filter(v => ['serious', 'critical'].includes(v.impact)); ok(bad.length === 0, 'revision compare: no serious/critical a11y issues' + (bad.length ? ' - ' + bad.map(v => v.id + ' (' + v.nodes.map(n => n.target.join(' ') + ' ' + (n.any[0] && n.any[0].message || '').slice(0, 110)).slice(0, 3).join('; ') + ')').join(', ') : '')); }
   await page.click('#cmpx');
 
+  console.log('\nClient portal page');
+  await api('POST', `projects/${pid}/log`, { text: 'Update <img src=x onerror=window.__pwn=1> with photo', progress: 40, photos: ['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='] });
+  const plink = (await api('POST', `projects/${pid}/portal`, {})).data.link;
+  await page.goto(plink); await page.waitForSelector('.bar'); await page.waitForSelector('img.lth');
+  ok(!(await page.evaluate(() => window.__pwn)), 'portal text is escaped (no script injection)');
+  ok(await page.evaluate(() => document.querySelector('img.lth').naturalWidth > 0), 'site photo loads through the portal');
+  if (axeSrc) { await page.evaluate(axeSrc); const r = await page.evaluate(async () => await axe.run(document, { runOnly: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] })); const bad = r.violations.filter(v => ['serious', 'critical'].includes(v.impact)); ok(bad.length === 0, 'portal: no serious/critical a11y issues' + (bad.length ? ' - ' + bad.map(v => v.id + ' (' + v.nodes.map(n => n.target.join(' ') + ' ' + (n.any[0] && n.any[0].message || '').slice(0, 110)).slice(0, 3).join('; ') + ')').join(', ') : '')); }
+  await page.setViewportSize({ width: 375, height: 800 }); await page.reload(); await page.waitForSelector('.bar');
+  ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'portal has no horizontal scroll on a phone'); await page.setViewportSize({ width: 1280, height: 900 });
+  await go(`#/projects/${pid}`); await page.waitForSelector('[data-act=portal]'); await page.click('[data-act=portal]'); await page.waitForSelector('#plink');
+  if (axeSrc) { await page.evaluate(axeSrc); const r = await page.evaluate(async () => await axe.run(document, { runOnly: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] })); const bad = r.violations.filter(v => ['serious', 'critical'].includes(v.impact)); ok(bad.length === 0, 'portal dialog: no serious/critical a11y issues' + (bad.length ? ' - ' + bad.map(v => v.id).join(', ') : '')); }
+  await page.click('#pcl');
+
   /* ---------- staff UI ---------- */
   console.log('\nStaff role UI');
   const staffCtx = await browser.newContext({ viewport: { width: 1280, height: 900 } }); const sp = await staffCtx.newPage();

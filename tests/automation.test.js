@@ -242,6 +242,27 @@ const pub = (tok, r, body) => fetch(`${BASE}/api/public.php?r=${r}&t=${tok}`, { 
     const v3 = (await admin.api('POST', `projects/${pid}/variations`, { title: 'Zero', amount: 0 })).data.id; eq((await admin.api('POST', `projects/${pid}/variations/${v3}/request-approval`, {})).status, 400);
   });
 
+  console.log('\nClient portal');
+  await test('portal: link per project, shows progress/schedule/receipts/updates/photos, hides internals, revocable, emailed, in the acceptance mail', async () => {
+    smtp.messages.length = 0;
+    const q = await mkQuote('Portal Co', 'portal@example.com'), s = await share(q); await pub(s.t, 'respond', { action: 'accept', name: 'PC', expected_total: s.total });
+    const pid = (await admin.api('GET', 'projects')).data.projects.find(p => p.quote_no === q.quote_no).id;
+    ok(mails().some(m => m.to.includes('portal@example.com') && /portal\.html\?t=[a-f0-9]{32}/.test(m.html || m.text || m.raw)), 'acceptance e-mail carries the portal link');
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    eq((await admin.api('POST', `projects/${pid}/log`, { text: 'Foundation done', progress: 35, photos: [png] })).status, 201);
+    const ms = (await admin.api('GET', `projects/${pid}`)).data.milestones[0]; eq((await admin.api('POST', `projects/${pid}/receipts`, { milestone_id: ms.id, amount: 100, mode: 'UPI', received_on: new Date().toISOString().slice(0, 10) })).status, 201);
+    const pl = await admin.api('POST', `projects/${pid}/portal`, {}); eq(pl.status, 200); ok(/portal\.html\?t=[a-f0-9]{32}$/.test(pl.data.link)); const tok = pl.data.link.split('t=')[1];
+    eq((await admin.api('POST', `projects/${pid}/portal`, {})).data.link, pl.data.link, 'same link until rotated');
+    const r = await pub(tok, 'portal'); eq(r.status, 200); eq(r.data.project.progress, 35); eq(r.data.milestones.length, 2); eq(r.data.receipts[0].amount, 100); eq(r.data.updates[0].photos, 1); ok(r.data.totals.contract > 0 && r.data.totals.received === 100, 'totals');
+    const txt = JSON.stringify(r.data); for (const bad of ['"cost"', 'portal_token', 'approval_token', 'author', 'client_id', 'notes']) ok(!txt.includes(bad), 'portal must not expose ' + bad);
+    const img = await fetch(`${BASE}/api/public.php?r=portal-photo&t=${tok}&l=${r.data.updates[0].id}&i=0`, { headers: { 'X-Requested-With': 'infraura' } }); eq(img.status, 200); eq(img.headers.get('content-type'), 'image/png');
+    eq((await fetch(`${BASE}/api/public.php?r=portal-photo&t=${tok}&l=${r.data.updates[0].id}&i=5`)).status, 404, 'no such photo'); eq((await pub('f'.repeat(32), 'portal')).status, 404, 'unknown token');
+    smtp.messages.length = 0; eq((await admin.api('POST', `projects/${pid}/portal/email`, {})).status, 200); ok(mails().some(m => m.to.includes('portal@example.com') && /Track your project/.test(m.subject)), 'portal e-mailed to the client');
+    const rot = (await admin.api('POST', `projects/${pid}/portal`, { rotate: true })).data.link; ok(rot !== pl.data.link, 'new link'); eq((await pub(tok, 'portal')).status, 404, 'old link dead'); eq((await pub(rot.split('t=')[1], 'portal')).status, 200);
+    eq((await admin.api('DELETE', `projects/${pid}/portal`)).status, 200); eq((await pub(rot.split('t=')[1], 'portal')).status, 404, 'portal turned off');
+    const mcp = (await admin.api('GET', `projects/${pid}`)).data.project; ok('portal_token' in mcp, 'admin sees the field');
+  });
+
   console.log('\nInstaller');
   const fs = require('fs'), os = require('os'), { spawn } = require('child_process');
   const fresh = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'qbinst-')); fs.cpSync(APP_DIR, d, { recursive: true, filter: s => !/config\.php$|\.sqlite$|[\\/]backups/.test(s) && !/[\\/]data[\\/]/.test(s) }); try { fs.rmSync(path.join(d, 'api', 'config.php'), { force: true }); } catch (e) {} return d; };

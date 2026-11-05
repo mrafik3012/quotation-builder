@@ -160,3 +160,4 @@ pre.snip{background:#0b0b0b;border:1px solid #2b2619;border-radius:8px;padding:1
 
 .checklist{list-style:none;margin:10px 0 0;padding:0}.checklist li{padding:5px 0;font-size:14px}.checklist li.ok{color:var(--muted)}.checklist li.ok a{color:inherit}
 .t tr.add td:first-child{color:#6fcf97;font-weight:700}.t tr.rem td{text-decoration:line-through;color:var(--muted)}.t tr.chg td:first-child{color:var(--gold,#d4af37);font-weight:700}
+.bar{height:10px;background:#222;border-radius:6px;overflow:hidden;margin-top:4px}.bar i{display:block;height:100%;background:var(--brand)}

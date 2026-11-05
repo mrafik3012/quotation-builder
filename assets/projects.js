@@ -24,7 +24,7 @@ async function pageProject(id) {
   const r = await api('projects/' + id), p = r.project, T = r.totals, today_ = today();
   const lastProg = (r.log.find(l => l.progress !== null) || {}).progress, admin = S.user.role === 'admin';
   const v = $('#view');
-  v.innerHTML = `<div class="page-head"><h1>${esc(p.name)}</h1>${divChip(p.division)}</div>
+  v.innerHTML = `<div class="page-head"><h1>${esc(p.name)}</h1><span>${divChip(p.division)} <button class="btn sm" data-act="portal" type="button">Client portal</button></span></div>
   <div class="row" style="margin-bottom:14px"><a class="btn" href="#/projects">← Projects</a>${r.quote ? `<a class="btn" href="#/quotes/${r.quote.id}">Quotation ${esc(r.quote.quote_no)}</a>` : ''}<span class="sp"></span>${S.user.role === 'admin' ? '<button class="btn dng" data-act="delproj">Delete project</button>' : ''}</div>
   <div class="tiles">
    <div class="tile"><div class="l">Contract value</div><div class="v">${inr0(T.contract)}</div><div class="s">${T.variations ? 'incl. ' + inr0(T.variations) + ' variations' : 'incl. GST'}${T.credits ? ' · − ' + inr0(T.credits) + ' credit notes' : ''}</div></div>
@@ -68,6 +68,7 @@ async function pageProject(id) {
     else if (a === 'einv') einvModal(id, r.milestones.find(m => m.id === mid), reload);
     else if (a === 'inv') guard(async () => { await api(`projects/${id}/milestones/${mid}/invoice`, 'POST'); location.hash = `#/projects/${id}/invoice/${mid}`; });
     else if (a === 'delrc') { if (confirmBox('Delete this payment record?')) call('receipts/' + mid, 'DELETE', undefined, 'Deleted'); }
+    else if (a === 'portal') guard(portalDialog);
     else if (a === 'reqvar') guard(async () => {
       const res = await api(`projects/${id}/variations/${mid}/request-approval`, 'POST', {});
       const m = openModal(`<h2>Change order sent</h2><p>${res.emailed ? 'The client has been e-mailed the approval link.' : esc(res.note || '')}</p><label class="f"><span>Approval link (you can also WhatsApp it)</span><input id="vlink" readonly value="${esc(res.link)}"></label><div class="row end"><a class="btn" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent('Please review and approve this change order: ' + res.link)}">WhatsApp</a><button class="btn pri" id="vok" type="button">Done</button></div>`);
@@ -170,4 +171,22 @@ async function pageCredit(pid, cid) {
   <div class="sig"><div>Client acknowledgement</div><div>For ${esc(s.company_name)}${s.signatory ? '<br><b>' + esc(s.signatory) + '</b>' : ''}<br>Authorised signatory</div></div>
   <div class="foot">${mode === 'intra' ? 'Intra-state supply (CGST + SGST) · ' : mode === 'inter' ? 'Inter-state supply (IGST) · ' : ''}This is a computer-generated credit note · ${esc(x.credit_no)}</div></div>`;
   $('#pr').onclick = () => window.print();
+}
+
+
+/* ---------- client portal (private progress link) ---------- */
+async function portalDialog() {
+  const id = +location.hash.split('/')[2];
+  const res = await api(`projects/${id}/portal`, 'POST', {});
+  const m = openModal(`<h2>Client portal</h2><p class="small muted">A private page where the client follows progress: site updates with photos, payment schedule and amounts received. Costs and margins are never shown.</p>
+   <label class="f"><span>Private link</span><input id="plink" readonly value="${esc(res.link)}"></label>
+   <label class="f"><span>E-mail it to (defaults to the client)</span><input id="pto" type="email" placeholder="client@example.com"></label>
+   <div class="row"><button class="btn pri" id="pmail" type="button">E-mail link</button><a class="btn" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent('Follow your project progress here: ' + res.link)}">WhatsApp</a><a class="btn" target="_blank" rel="noopener" href="${esc(res.link)}">Preview</a></div>
+   <div class="row" style="margin-top:10px"><button class="btn sm" id="prot" type="button">Make a new link</button><button class="btn sm dng" id="prev" type="button">Turn portal off</button><span class="sp"></span><button class="btn" id="pcl" type="button">Close</button></div>
+   <p class="small muted" style="margin-top:8px">A new link or turning it off stops the old link working immediately.</p>`);
+  $('#plink', m.el).onfocus = e => e.target.select();
+  $('#pcl', m.el).onclick = m.close;
+  $('#pmail', m.el).onclick = () => guard(async () => { const r = await api(`projects/${id}/portal/email`, 'POST', { to: $('#pto', m.el).value.trim() }); toast('Portal link e-mailed to ' + r.to, 'ok'); });
+  $('#prot', m.el).onclick = () => { if (confirmBox('Create a new link? The old link will stop working.')) guard(async () => { const r = await api(`projects/${id}/portal`, 'POST', { rotate: true }); $('#plink', m.el).value = r.link; toast('New link created', 'ok'); }); };
+  $('#prev', m.el).onclick = () => { if (confirmBox('Turn the portal off? The current link will stop working.')) guard(async () => { await api(`projects/${id}/portal`, 'DELETE'); m.close(); toast('Portal turned off', 'ok'); }); };
 }

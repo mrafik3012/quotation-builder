@@ -3,7 +3,7 @@ declare(strict_types=1);
 // Lightweight forward-only migrations. Runs automatically (once per version) on the first signed-in request,
 // so already-installed sites upgrade just by uploading the new files.
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 function ensure_schema(): void
 {
@@ -104,6 +104,11 @@ function ensure_schema(): void
         }
         ddl('CREATE INDEX idx_pv_token ON project_variations (approval_token)');
         if (get_setting('price_factors') === null) set_setting('price_factors', "Metro (Mumbai / Delhi / Bengaluru / Hyderabad / Chennai)|12\nTier-2 city|0\nSmaller town|-8");
+    }
+    if ($cur < 10) {
+        // client portal: one private link per project
+        if (!column_exists('projects', 'portal_token')) ddl('ALTER TABLE projects ADD COLUMN portal_token VARCHAR(32) NULL');
+        ddl('CREATE INDEX idx_proj_portal ON projects (portal_token)');
     }
     set_setting('schema_v', (string)SCHEMA_VERSION);
 }
