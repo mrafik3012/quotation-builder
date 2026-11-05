@@ -50,6 +50,8 @@ Dashboard → **⚡ Quick quote**: choose the service, pick (or type) the client
 | Construction | built-up area, floors, Grey / Standard / Premium finish | turnkey cost, waterproofing, design, approvals, testing, insurance |
 | PMC | project cost (or area), months, Full or Part scope | fee by cost band (3% / 2.5% / 2%), site engineer & QS, quality and safety audits, handover |
 
+**More accurate options.** *Interior → "Measure room by room"*: list each room (living, bedroom, kitchen, bathroom, dining, study, pooja, balcony, utility) with length × width; the quote then has one section per room, with wardrobes sized from the room, ceiling and paint areas from the dimensions (walls = perimeter × height minus door/window openings), kitchen run from the two walls, bathroom waterproofing and fittings, and electrical points by area. *Construction → "Detailed bill of quantities"*: itemised earthwork, footings, columns, beams and slabs (concrete), steel (about 4 kg/sq ft), shuttering, masonry, plaster, flooring, doors and windows, electrical and plumbing, painting, plus overhead (12%) and contingency (5%). Quantities come from standard thumb rules for RCC-framed buildings (about 0.045 m³ concrete per sq ft, footprint = area ÷ floors) and the quote says they are estimates to be confirmed against drawings or site measurement.
+
 Pick several finishes/materials/scopes and the client gets **one quote with options** to choose from. Because prices are read from the rate cards, updating a rate changes every future quick quote. The same engine serves AI assistants (`create_quick_quote`, see [MCP.md](MCP.md)).
 
 ## 6. Connect AI assistants

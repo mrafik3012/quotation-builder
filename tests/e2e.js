@@ -170,6 +170,17 @@ const ok = (c, m) => { if (c) { passed++; console.log('  ok   ' + m); } else { f
   if (axeSrc) { await page.evaluate(axeSrc); const r = await page.evaluate(async () => await axe.run(document, { runOnly: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] })); const bad = r.violations.filter(v => ['serious', 'critical'].includes(v.impact)); ok(bad.length === 0, 'interior quick-quote form: no serious/critical a11y issues' + (bad.length ? ' - ' + bad.map(v => v.id).join(', ') : '')); }
   await page.fill('input[name=client_name]', 'Browser Interior Co'); await page.click('#qrf button.pri'); await page.waitForFunction(() => /#\/quotes\/\d+/.test(location.hash), null, { timeout: 8000 });
   ok(/#\/quotes\/\d+/.test(page.url()), 'interior quick quote opens the new draft');
+  await go('#/dashboard'); await page.waitForSelector('#quickroof'); await page.click('#quickroof'); await page.waitForSelector('#qrf');
+  await page.click('#qsvc label:has(input[value=interior])'); await page.check('#qroomsOn'); await page.waitForSelector('.qroom');
+  ok((await page.locator('.qroom').count()) === 4, 'room-by-room starts with 4 sample rooms'); await page.click('#qaddroom'); ok((await page.locator('.qroom').count()) === 5, 'rooms can be added');
+  if (axeSrc) { await page.evaluate(axeSrc); const r = await page.evaluate(async () => await axe.run(document, { runOnly: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] })); const bad = r.violations.filter(v => ['serious', 'critical'].includes(v.impact)); ok(bad.length === 0, 'room-by-room form: no serious/critical a11y issues' + (bad.length ? ' - ' + bad.map(v => v.id).join(', ') : '')); }
+  await page.locator('.qroom').last().locator('.qr-l').fill('10'); await page.locator('.qroom').last().locator('.qr-w').fill('10');
+  await page.fill('input[name=client_name]', 'Browser Rooms Co'); await page.click('#qrf button.pri'); await page.waitForFunction(() => /#\/quotes\/\d+/.test(location.hash), null, { timeout: 8000 });
+  await page.waitForFunction(() => [...document.querySelectorAll('input,textarea')].some(e => /Living \(15 x 12 ft\)/.test(e.value)) || /Living \(15 x 12 ft\)/.test(document.body.innerText), null, { timeout: 8000 }); ok(true, 'room-by-room quote shows one section per room');
+  await go('#/dashboard'); await page.waitForSelector('#quickroof'); await page.click('#quickroof'); await page.waitForSelector('#qrf');
+  await page.click('#qsvc label:has(input[value=construction])'); await page.fill('input[name=built_up_sqft]', '1800'); await page.check('input[name=detailed]');
+  await page.fill('input[name=client_name]', 'Browser BOQ Co'); await page.click('#qrf button.pri'); await page.waitForFunction(() => /#\/quotes\/\d+/.test(location.hash), null, { timeout: 8000 });
+  await page.waitForFunction(() => [...document.querySelectorAll('input,textarea')].some(e => /Foundation & RCC structure/.test(e.value)) || /Foundation & RCC structure/.test(document.body.innerText), null, { timeout: 8000 }); ok(true, 'detailed BOQ quote shows itemised sections');
 
   /* ---------- staff UI ---------- */
   console.log('\nStaff role UI');
