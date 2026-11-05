@@ -103,7 +103,8 @@ async function init() {
     if (me.must_change) return showMustChange();
     await loadBootstrap();
     route();
-    setInterval(() => { if (S.user) api('auth/me').catch(() => {}); }, 8 * 60 * 1000); // keep the session alive while a long quote is being edited
+    tick();
+    setInterval(() => { if (S.user) { api('auth/me').catch(() => {}); tick(); } }, 8 * 60 * 1000); // keep the session alive while a long quote is being edited
   } catch (e) {
     $('#app').innerHTML = `<div class="login"><img class="logo" src="assets/logo.png" alt="Infraura"><h1>Quotation Builder</h1><p class="muted">${esc(e.message)}</p></div>`;
   }
@@ -220,9 +221,25 @@ async function route() {
   }
 }
 
+/* ---------- self-running jobs + setup checklist ---------- */
+function tick() { if (S.user) api('tick', 'POST', {}).catch(() => {}); }   // lets the server run backups/summaries/reminders without any cron setup
+async function setupCard() {
+  if (!S.user || S.user.role !== 'admin') return '';
+  let c; try { c = await api('setup'); } catch (e) { return ''; }
+  if (c.dismissed) return '';
+  const row = i => `<li class="${i.done ? 'ok' : ''}">${i.done ? '✓' : '○'} ${i.link ? `<a href="${i.link}">${esc(i.label)}</a>` : esc(i.label)}${!i.done && i.action ? ` <button class="btn sm" data-sact="${i.action}" type="button">Mark done</button>` : ''}</li>`;
+  return `<div class="card" id="setupcard"><div class="row" style="justify-content:space-between"><h3 style="margin:0">Finish setting up · ${c.left} left</h3><button class="btn sm" id="sdismiss" type="button">Hide</button></div><ul class="checklist">${c.items.map(row).join('')}</ul></div>`;
+}
+function wireSetupCard() {
+  const dis = $('#sdismiss');
+  if (dis) dis.onclick = async () => { await api('setup/dismiss', 'POST', {}); const c = $('#setupcard'); if (c) c.style.display = 'none'; };
+  $$('[data-sact]').forEach(b => { b.onclick = async () => { await api('setup/' + b.dataset.sact, 'POST', {}); route(); }; });
+}
+
 /* ---------- dashboard ---------- */
 async function pageDashboard() {
   const d = await api('dashboard');
+  const setup = await setupCard();
   const st = Object.fromEntries(d.by_status.map(x => [x.status, x]));
   const g = k => st[k] || { n: 0, value: 0 };
   const total = d.by_status.reduce((a, x) => a + x.n, 0);
@@ -234,6 +251,7 @@ async function pageDashboard() {
   const dv = Object.fromEntries(d.by_division.map(x => [x.division, x]));
   $('#view').innerHTML = `
   <div class="page-head"><h1>Dashboard</h1><a class="btn pri" href="#/quotes">All quotes</a></div>
+  ${setup}
   <div class="tiles">
    <div class="tile"><div class="l">Quotes</div><div class="v">${total}</div><div class="s">latest revisions</div></div>
    <div class="tile"><div class="l">Open pipeline</div><div class="v">${inr0(open)}</div><div class="s">${openN} draft / sent</div></div>
@@ -252,6 +270,7 @@ async function pageDashboard() {
   ${d.amc_due && d.amc_due.length ? `<div class="card"><h2>AMC / warranty renewals due</h2>${d.amc_due.map(a => { const days = Math.round((new Date(a.amc_end + 'T00:00:00') - new Date(today() + 'T00:00:00')) / 864e5); return `<div class="row" style="margin-bottom:8px"><div style="flex:1;min-width:200px"><a href="#/projects/${a.id}"><b>${esc(a.name)}</b></a> · ${esc(a.client_name || '')}<div class="muted small">${days >= 0 ? 'ends in ' + days + ' day(s)' : '<span class="bad">ended ' + (-days) + ' day(s) ago</span>'} (${esc(fdate(a.amc_end))})${a.amc_note ? ' · ' + esc(a.amc_note) : ''}</div></div><a class="btn sm" target="_blank" rel="noopener" href="${waLink(a.client_phone, `Hello ${a.client_name || ''}, the AMC / warranty for ${a.name} ${days >= 0 ? 'ends on ' + fdate(a.amc_end) : 'ended on ' + fdate(a.amc_end)}. Shall we renew or schedule a maintenance visit? - ${S.settings.company_name}`)}">WhatsApp renewal</a></div>`; }).join('')}</div>` : ''}
   ${d.follow_up && d.follow_up.length ? `<div class="card"><h2>Follow-ups due — sent 3+ days ago, no reply</h2>${d.follow_up.map(f => { const c = f.client || {}, days = Math.max(3, Math.floor((Date.now() - new Date(f.updated_at.replace(' ', 'T'))) / 864e5)); return `<div class="row" style="margin-bottom:8px"><div style="flex:1;min-width:200px"><a href="#/quotes/${f.id}"><b>${esc(f.quote_no)}</b></a> · ${esc(c.name || '')}<div class="muted small">${days} days ago · ${f.views ? 'viewed ' + f.views + '×' : 'not opened yet'}</div></div><b>${inr0(f.total)}</b><a class="btn sm" target="_blank" rel="noopener" href="${waLink(c.phone, `Hello ${c.contact_person || c.name || ''}, a gentle reminder about our quotation ${f.quote_no} (${inr0(f.total)}). Happy to clarify anything or revise it - ${S.settings.company_name}`)}">WhatsApp reminder</a></div>`; }).join('')}</div>` : ''}
   <div class="card"><h2>Recent quotes</h2>${quoteTable(d.recent)}</div>`;
+  wireSetupCard();
 }
 
 /* ---------- quotes list ---------- */

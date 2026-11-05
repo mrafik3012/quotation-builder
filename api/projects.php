@@ -79,6 +79,31 @@ function receivables_summary(): array
     return ['projects' => count($rows), 'active' => $active, 'contract' => round($contract, 2), 'received' => round($rec, 2), 'outstanding' => round($contract - $rec, 2), 'overdue' => (int)$od['n']];
 }
 
+/** Create a project (with milestones from the payment schedule) from an accepted quote row. Caller has validated the quote. */
+function create_project_from_quote(array $qr): int
+{
+    $data = json_decode((string)$qr['data'], true) ?: [];
+    $client = json_decode((string)$qr['client_json'], true) ?: [];
+    $name = $qr['title'] !== '' ? $qr['title'] : ($client['name'] ?? $qr['quote_no']);
+    db()->beginTransaction();
+    q('INSERT INTO projects (quote_no,name,client_id,division,status,base_value,tax_rate,start_date,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+        [$qr['quote_no'], $name, $qr['client_id'], $qr['division'], 'active', (float)$qr['total'], (float)($data['tax_rate'] ?? 18), date('Y-m-d'), now()]);
+    $pid = (int)db()->lastInsertId();
+    $i = 0; $left = round((float)$qr['total'], 2);
+    $sched = array_values($data['payment_schedule'] ?? []);
+    $pctSum = array_sum(array_map(fn($s) => num($s['percent'] ?? 0), $sched));
+    foreach ($sched as $k => $s) {
+        $pct = num($s['percent'] ?? 0);
+        $amt = round((float)$qr['total'] * $pct / 100, 2);
+        // when the stages add up to 100%, the last one absorbs rounding so milestones always equal the contract exactly
+        if ($k === count($sched) - 1 && abs($pctSum - 100) < 0.01) $amt = round($left, 2);
+        $left -= $amt;
+        q('INSERT INTO project_milestones (project_id,label,percent,amount,sort) VALUES (?,?,?,?,?)', [$pid, str($s['label'] ?? '', 190), $pct, $amt, $i++]);
+    }
+    db()->commit();
+    return $pid;
+}
+
 function projects_route(string $m, array $p, array $user): void
 {
     $id = isset($p[0]) && ctype_digit($p[0]) ? (int)$p[0] : null;
@@ -103,25 +128,7 @@ function projects_route(string $m, array $p, array $user): void
             if ($qr['status'] !== 'accepted' || !(int)$qr['is_latest']) fail('Only an accepted (latest) quotation can be converted to a project');
             if ((float)$qr['total'] <= 0) fail('This quotation has no value to bill');
             if (q('SELECT 1 FROM projects WHERE quote_no = ?', [$qr['quote_no']])->fetch()) fail('A project already exists for this quotation');
-            $data = json_decode((string)$qr['data'], true) ?: [];
-            $client = json_decode((string)$qr['client_json'], true) ?: [];
-            $name = $qr['title'] !== '' ? $qr['title'] : ($client['name'] ?? $qr['quote_no']);
-            db()->beginTransaction();
-            q('INSERT INTO projects (quote_no,name,client_id,division,status,base_value,tax_rate,start_date,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
-                [$qr['quote_no'], $name, $qr['client_id'], $qr['division'], 'active', (float)$qr['total'], (float)($data['tax_rate'] ?? 18), date('Y-m-d'), now()]);
-            $pid = (int)db()->lastInsertId();
-            $i = 0; $left = round((float)$qr['total'], 2);
-            $sched = array_values($data['payment_schedule'] ?? []);
-            $pctSum = array_sum(array_map(fn($s) => num($s['percent'] ?? 0), $sched));
-            foreach ($sched as $k => $s) {
-                $pct = num($s['percent'] ?? 0);
-                $amt = round((float)$qr['total'] * $pct / 100, 2);
-                // when the stages add up to 100%, the last one absorbs rounding so milestones always equal the contract exactly
-                if ($k === count($sched) - 1 && abs($pctSum - 100) < 0.01) $amt = round($left, 2);
-                $left -= $amt;
-                q('INSERT INTO project_milestones (project_id,label,percent,amount,sort) VALUES (?,?,?,?,?)', [$pid, str($s['label'] ?? '', 190), $pct, $amt, $i++]);
-            }
-            db()->commit();
+            $pid = create_project_from_quote($qr);
             json_out(['id' => $pid], 201);
         }
         fail('Not found', 404);

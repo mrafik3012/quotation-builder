@@ -6,6 +6,7 @@ require __DIR__ . '/migrate.php';
 require __DIR__ . '/projects.php';
 require __DIR__ . '/mail.php';
 require __DIR__ . '/auth.php';
+require __DIR__ . '/jobs.php';
 start_session();
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -127,6 +128,19 @@ function route(string $m, string $a, ?string $b, ?string $c): void
     ensure_schema();
 
     switch ($a) {
+        case 'tick': // background housekeeping: the browser pings this after sign-in so jobs run without any cron setup
+            if ($m !== 'POST') break;
+            session_write_close();
+            $ran = maybe_run_jobs();
+            json_out(['ran' => $ran !== null]);
+
+        case 'setup': // "finish setting up" checklist (admin)
+            require_admin();
+            if ($m === 'POST' && $b === 'dismiss') { set_setting('setup_dismissed', '1'); json_out(['ok' => true]); }
+            if ($m === 'POST' && $b === 'rates-reviewed') { set_setting('rates_reviewed', '1'); json_out(['ok' => true]); }
+            if ($m === 'GET') json_out(setup_checklist());
+            break;
+
         case 'bootstrap': // everything the UI needs after login
             json_out([
                 'user' => $user,
@@ -145,7 +159,7 @@ function route(string $m, string $a, ?string $b, ?string $c): void
             if ($m === 'PUT') {
                 require_admin();
                 $d = body();
-                $allowed = array_diff(array_keys(all_settings_raw()), ['cron_key', 'cron_last_run', 'schema_v']);
+                $allowed = array_diff(array_keys(all_settings_raw()), ['cron_key', 'cron_last_run', 'schema_v', 'auto_jobs_at']);
                 foreach ($d as $k => $v) {
                     if (!in_array($k, $allowed, true)) continue;
                     $v = trim((string)$v);
@@ -153,7 +167,7 @@ function route(string $m, string $a, ?string $b, ?string $c): void
                     if ($k === 'smtp_port' && (!ctype_digit($v) || (int)$v < 1 || (int)$v > 65535)) fail('SMTP port must be a number between 1 and 65535');
                     if ($k === 'smtp_enc' && !in_array($v, ['ssl', 'tls', 'none'], true)) fail('Encryption must be ssl, tls or none');
                     if ($k === 'mail_from' && $v !== '' && !filter_var($v, FILTER_VALIDATE_EMAIL)) fail('From address must be a valid e-mail address');
-                    if (in_array($k, ['client_reminders', 'oauth_enabled'], true) && !in_array($v, ['0', '1'], true)) fail('Invalid on/off setting');
+                    if (in_array($k, ['client_reminders', 'oauth_enabled', 'auto_jobs', 'notify_events', 'confirm_client', 'auto_project', 'overdue_reminders', 'setup_dismissed', 'rates_reviewed'], true) && !in_array($v, ['0', '1'], true)) fail('Invalid on/off setting');
                     if ($k === 'backup_keep' && (!ctype_digit($v) || (int)$v < 1 || (int)$v > 90)) fail('Keep between 1 and 90 backups');
                     if ($k === 'validity_days' && (!ctype_digit($v) || (int)$v < 1 || (int)$v > 365)) fail('Validity must be a whole number of days between 1 and 365');
                     if (($k === 'min_margin' || strpos($k, 'gst_') === 0) && (!is_numeric($v) || (float)$v < 0 || (float)$v > 100)) fail('Percentages must be numbers between 0 and 100');
@@ -616,3 +630,23 @@ function backup_download(): void
     exit;
 }
 
+
+/** What is left to do before the app is fully set up. Each item: key, label, done, hint, link. */
+function setup_checklist(): array
+{
+    $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+    $local = in_array($_SERVER['SERVER_NAME'] ?? '', ['localhost', '127.0.0.1'], true);
+    $sent = q("SELECT 1 FROM email_log WHERE status = 'sent' LIMIT 1")->fetch();
+    $items = [
+        ['key' => 'company', 'label' => 'Add company name, address and GSTIN', 'done' => trim((string)get_setting('company_name')) !== '' && trim((string)get_setting('company_address')) !== '' && trim((string)get_setting('company_gstin')) !== '', 'link' => '#/settings'],
+        ['key' => 'rates', 'label' => 'Review the starter rates and costs', 'done' => get_setting('rates_reviewed') === '1', 'link' => '#/rates', 'action' => 'rates-reviewed'],
+        ['key' => 'email', 'label' => 'Connect e-mail (so quotes, alerts and resets can be sent)', 'done' => mail_configured() && (bool)$sent, 'link' => '#/settings'],
+        ['key' => '2fa', 'label' => 'Turn on two-step sign-in for admins', 'done' => (int)q("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND totp_enabled = 1")->fetch()['n'] > 0, 'link' => '#/settings'],
+        ['key' => 'https', 'label' => 'Use HTTPS (turn on SSL in hPanel)', 'done' => $https || $local, 'link' => null],
+        ['key' => 'installer', 'label' => 'Delete install.php from the server', 'done' => !is_file(dirname(__DIR__) . '/install.php'), 'link' => null],
+        ['key' => 'jobs', 'label' => 'Background jobs have run (backups, daily summary)', 'done' => get_setting('cron_last_run') !== null && get_setting('cron_last_run') !== '', 'link' => '#/settings'],
+        ['key' => 'backup', 'label' => 'A backup exists', 'done' => count(backup_files()) > 0, 'link' => '#/settings'],
+    ];
+    $left = count(array_filter($items, fn($i) => !$i['done']));
+    return ['items' => $items, 'left' => $left, 'dismissed' => get_setting('setup_dismissed') === '1' || $left === 0];
+}

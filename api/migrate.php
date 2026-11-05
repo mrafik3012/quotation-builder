@@ -3,7 +3,7 @@ declare(strict_types=1);
 // Lightweight forward-only migrations. Runs automatically (once per version) on the first signed-in request,
 // so already-installed sites upgrade just by uploading the new files.
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 function ensure_schema(): void
 {
@@ -90,6 +90,12 @@ function ensure_schema(): void
         ddl("CREATE TABLE IF NOT EXISTS oauth_codes (code_hash CHAR(64) NOT NULL PRIMARY KEY, client_id VARCHAR(64) NOT NULL, user_id INT NOT NULL, scope VARCHAR(10) NOT NULL, hide_costs TINYINT NOT NULL DEFAULT 1, redirect_uri VARCHAR(500) NOT NULL, code_challenge VARCHAR(128) NOT NULL, grant_id VARCHAR(32) NOT NULL, expires_at INT NOT NULL, used TINYINT NOT NULL DEFAULT 0)$eng");
         ddl("CREATE TABLE IF NOT EXISTS oauth_refresh (token_hash CHAR(64) NOT NULL PRIMARY KEY, client_id VARCHAR(64) NOT NULL, user_id INT NOT NULL, scope VARCHAR(10) NOT NULL, hide_costs TINYINT NOT NULL DEFAULT 1, grant_id VARCHAR(32) NOT NULL, expires_at INT NOT NULL, revoked TINYINT NOT NULL DEFAULT 0)$eng");
         foreach (['oauth_client VARCHAR(64) NULL', 'grant_id VARCHAR(32) NULL'] as $def) { if (!column_exists('api_tokens', explode(' ', $def)[0])) ddl('ALTER TABLE api_tokens ADD COLUMN ' . $def); }
+    }
+    if ($cur < 8) {
+        // automation switches (defaults: the safe, helpful ones on; anything that e-mails clients beyond a confirmation stays opt-in)
+        foreach (['auto_jobs' => '1', 'auto_jobs_at' => '0', 'notify_events' => '1', 'confirm_client' => '1', 'auto_project' => '1', 'overdue_reminders' => '0', 'setup_dismissed' => '0', 'rates_reviewed' => '0'] as $k => $v) {
+            if (get_setting($k) === null) set_setting($k, $v);
+        }
     }
     set_setting('schema_v', (string)SCHEMA_VERSION);
 }

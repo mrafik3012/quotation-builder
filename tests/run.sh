@@ -34,7 +34,7 @@ echo "== money math parity (browser JS vs server PHP)";        node tests/parity
 echo "== roof calculator parity (browser JS vs server PHP)";   node tests/roof_parity.js
 
 # suites that share rate limits / counters each get a fresh database
-for suite in api mcp oauth accounts billing features cron scale; do
+for suite in api mcp oauth accounts billing features cron automation scale; do
   install_app; start_server
   echo "== $suite"; node "tests/$suite.test.js"
 done

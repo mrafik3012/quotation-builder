@@ -13,6 +13,7 @@ const day = n => new Date(Date.now() + n * 86400000 + 5.5 * 3600000).toISOString
 (async () => {
   console.log(`Feature tests against ${BASE}`);
   const admin = new Client(BASE); eq((await admin.api('POST', 'auth/login', ADMIN)).status, 200);
+  await admin.api('PUT', 'settings', { auto_project: '0' });   // these tests create projects by hand
   const staff = new Client(BASE); const se = `feat-staff-${Date.now()}@example.com`; await admin.api('POST', 'users', { name: 'S', email: se, password: 'staffpass1', role: 'staff' }); await staff.api('POST', 'auth/login', { email: se, password: 'staffpass1' });
   const mkAccepted = async (name, extra = {}) => {
     const q = (await admin.api('POST', 'quotes', { division: 'roofing', client: { name, phone: '9811122233', email: `${name.replace(/\W/g, '').toLowerCase()}@example.com` }, title: name + ' job', data: { sections: [{ title: 'S', items: [{ desc: 'x', unit: 'u', qty: 10, rate: 1000 }] }], tax_rate: 18, payment_schedule: [{ label: 'All', percent: 100 }], ...extra } })).data;

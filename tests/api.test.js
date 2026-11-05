@@ -45,6 +45,7 @@ const quoteBody = (over = {}) => ({
   console.log('\nAuth & access');
   await test('unauthenticated API call returns 401', async () => eq((await anon.api('GET', 'bootstrap')).status, 401));
   await test('admin can sign in', async () => { const r = await admin.login(ADMIN.email, ADMIN.password); eq(r.status, 200); });
+  await test('manual-project tests: turn off automatic project creation', async () => { eq((await admin.api('PUT', 'settings', { auto_project: '0' })).status, 200); });
   await test('state-changing request without X-Requested-With is refused', async () => eq((await admin.api('POST', 'clients', { name: 'x' }, { noXrw: true })).status, 403));
   const staffEmail = `qa-staff-${Date.now()}@example.com`;
   await test('admin can add a staff user, staff can sign in', async () => {

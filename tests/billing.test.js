@@ -12,6 +12,7 @@ const near = (a, b, m = '') => { if (Math.abs(a - b) > 0.011) throw new Error(`$
 (async () => {
   console.log(`Billing tests against ${BASE}`);
   const admin = new Client(BASE); eq((await admin.api('POST', 'auth/login', ADMIN)).status, 200);
+  await admin.api('PUT', 'settings', { auto_project: '0' });   // these tests create projects by hand
   const staffEmail = `bill-staff-${Date.now()}@example.com`; const staff = new Client(BASE);
   await admin.api('POST', 'users', { name: 'Staff', email: staffEmail, password: 'staffpass1', role: 'staff' }); await staff.api('POST', 'auth/login', { email: staffEmail, password: 'staffpass1' });
 

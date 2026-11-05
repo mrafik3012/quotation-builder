@@ -157,3 +157,5 @@ pre.snip{background:#0b0b0b;border:1px solid #2b2619;border-radius:8px;padding:1
 
 .sr{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
 .pubwrap h2,.optpick{margin:0}
+
+.checklist{list-style:none;margin:10px 0 0;padding:0}.checklist li{padding:5px 0;font-size:14px}.checklist li.ok{color:var(--muted)}.checklist li.ok a{color:inherit}

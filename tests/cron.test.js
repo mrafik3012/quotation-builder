@@ -17,6 +17,7 @@ const ago = days => new Date(Date.now() - days * 86400000 + 5.5 * 3600000).toISO
   if (!APP_DIR) { console.log('APP_DIR not set - skipping cron tests'); process.exit(0); }
   console.log(`Cron / backup / health tests against ${BASE}`);
   const admin = new Client(BASE); eq((await admin.api('POST', 'auth/login', ADMIN)).status, 200);
+  await admin.api('PUT', 'settings', { auto_project: '0' });   // these tests create projects by hand
   const smtp = await startSmtp();
   await admin.api('PUT', 'settings', { smtp_host: '127.0.0.1', smtp_port: String(smtp.port), smtp_enc: 'none', smtp_user: '', smtp_pass: '', mail_from: 'quotes@example.com', client_reminders: '1', backup_keep: '2' });
   const key = (await admin.api('GET', 'settings')).data.cron_key; ok(/^[a-f0-9]{32}$/.test(key), 'cron key exists for admin');
