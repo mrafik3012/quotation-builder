@@ -250,7 +250,7 @@ async function pageDashboard() {
   const maxD = Math.max(1, ...d.by_division.map(m => m.value));
   const dv = Object.fromEntries(d.by_division.map(x => [x.division, x]));
   $('#view').innerHTML = `
-  <div class="page-head"><h1>Dashboard</h1><a class="btn pri" href="#/quotes">All quotes</a></div>
+  <div class="page-head"><h1>Dashboard</h1><span><button class="btn pri" id="quickroof" type="button">⚡ Quick roofing quote</button> <a class="btn" href="#/quotes">All quotes</a></span></div>
   ${setup}
   <div class="tiles">
    <div class="tile"><div class="l">Quotes</div><div class="v">${total}</div><div class="s">latest revisions</div></div>
@@ -271,6 +271,7 @@ async function pageDashboard() {
   ${d.follow_up && d.follow_up.length ? `<div class="card"><h2>Follow-ups due — sent 3+ days ago, no reply</h2>${d.follow_up.map(f => { const c = f.client || {}, days = Math.max(3, Math.floor((Date.now() - new Date(f.updated_at.replace(' ', 'T'))) / 864e5)); return `<div class="row" style="margin-bottom:8px"><div style="flex:1;min-width:200px"><a href="#/quotes/${f.id}"><b>${esc(f.quote_no)}</b></a> · ${esc(c.name || '')}<div class="muted small">${days} days ago · ${f.views ? 'viewed ' + f.views + '×' : 'not opened yet'}</div></div><b>${inr0(f.total)}</b><a class="btn sm" target="_blank" rel="noopener" href="${waLink(c.phone, `Hello ${c.contact_person || c.name || ''}, a gentle reminder about our quotation ${f.quote_no} (${inr0(f.total)}). Happy to clarify anything or revise it - ${S.settings.company_name}`)}">WhatsApp reminder</a></div>`; }).join('')}</div>` : ''}
   <div class="card"><h2>Recent quotes</h2>${quoteTable(d.recent)}</div>`;
   wireSetupCard();
+  const qr = $('#quickroof'); if (qr) qr.onclick = () => quickRoofDialog();
 }
 
 /* ---------- quotes list ---------- */

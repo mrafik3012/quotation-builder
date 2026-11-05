@@ -40,6 +40,9 @@ Point a free uptime monitor (UptimeRobot, Better Stack…) at `https://YOUR-DOMA
 
 Each of these can be switched off in **Settings → E-mail** (they need working e-mail to send messages; the project is created either way).
 
+### Quoting in one step
+Dashboard → **⚡ Quick roofing quote**: pick (or type) the client, enter length × width, roof type and one or more materials, and tick *E-mail it to the client right away* if you want. The app calculates the roof, prices every line from your rate card, fills in scope, payment schedule and terms from Settings, saves the quote and (optionally) e-mails the client their link. You can open and tweak it afterwards. The same engine answers AI requests such as "60 × 30 ft GI A-type" (see [MCP.md](MCP.md)).
+
 ## 6. Connect AI assistants
 Settings → **AI assistants (MCP)**. Claude.ai: *Settings → Connectors → Add custom connector →* paste the server address, then sign in here and press Allow. Claude Code / Desktop / Cursor / VS Code: create a token and use the ready-made snippet. Details: [MCP.md](MCP.md).
 

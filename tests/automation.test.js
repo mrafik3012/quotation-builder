@@ -103,6 +103,35 @@ const pub = (tok, r, body) => fetch(`${BASE}/api/public.php?r=${r}&t=${tok}`, { 
     const st = new Client(BASE); await st.api('POST', 'auth/login', { email, password: 'staffpass1' }); eq((await st.api('GET', 'setup')).status, 403);
   });
 
+  console.log('\nQuick roofing quote (one step in the app)');
+  await test('size + material -> priced draft, same numbers as the AI tool (60x30 GI A-type, frame in)', async () => {
+    const r = await admin.api('POST', 'quotes/quick-roofing', { length_ft: 60, width_ft: 30, roof_type: 'gable', materials: ['gi'], client: { name: 'Quick Co', email: 'quick@example.com' } });
+    eq(r.status, 201); ok(r.data.quote_no && r.data.totals.grand_total > 900000 && r.data.totals.grand_total < 970000, 'total ~9.36 lakh: ' + JSON.stringify(r.data.totals));
+    const q = (await admin.api('GET', `quotes/${r.data.quote_id}`)).data.quote; eq(q.status, 'draft'); eq(q.client.name, 'Quick Co');
+  });
+  await test('several materials -> one quote with options; sheets-only is cheaper', async () => {
+    const a = await admin.api('POST', 'quotes/quick-roofing', { length_ft: 100, width_ft: 40, materials: ['gi', 'upvc', 'puf50'], client: { name: 'Opt Co' } }); eq(a.status, 201); eq(a.data.options.length, 3);
+    const full = await admin.api('POST', 'quotes/quick-roofing', { length_ft: 60, width_ft: 30, materials: ['gi'], client: { name: 'F' } });
+    const lite = await admin.api('POST', 'quotes/quick-roofing', { length_ft: 60, width_ft: 30, materials: ['gi'], include_structure: false, client: { name: 'L' } });
+    ok(lite.data.totals.grand_total < full.data.totals.grand_total * 0.7, 'sheets only is much cheaper');
+  });
+  await test('send=true e-mails the client and marks the quote sent', async () => {
+    smtp.messages.length = 0;
+    const r = await admin.api('POST', 'quotes/quick-roofing', { length_ft: 40, width_ft: 20, materials: ['gi'], send: true, client: { name: 'Mail Me', email: 'mailme@example.com' } });
+    eq(r.status, 201); eq(r.data.sent, true, JSON.stringify(r.data));
+    ok(mails().some(m => m.to.includes('mailme@example.com') && /Quotation /.test(m.subject)), 'client got the quote');
+    eq((await admin.api('GET', `quotes/${r.data.quote_id}`)).data.quote.status, 'sent');
+  });
+  await test('send=true without a client e-mail still creates the draft and says why it was not sent', async () => {
+    const r = await admin.api('POST', 'quotes/quick-roofing', { length_ft: 40, width_ft: 20, materials: ['gi'], send: true, client: { name: 'No Mail' } });
+    eq(r.status, 201); eq(r.data.sent, false); ok(/e-mail/i.test(r.data.send_note));
+  });
+  await test('bad input is a readable 400', async () => {
+    eq((await admin.api('POST', 'quotes/quick-roofing', { length_ft: -1, width_ft: 20 })).status, 400);
+    eq((await admin.api('POST', 'quotes/quick-roofing', { length_ft: 10, width_ft: 20, materials: ['gold'] })).status, 400);
+    eq((await new Client(BASE).api('POST', 'quotes/quick-roofing', { length_ft: 10, width_ft: 20 })).status, 401);
+  });
+
   console.log('\nInstaller');
   const fs = require('fs'), os = require('os'), { spawn } = require('child_process');
   const fresh = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'qbinst-')); fs.cpSync(APP_DIR, d, { recursive: true, filter: s => !/config\.php$|\.sqlite$|[\\/]backups/.test(s) && !/[\\/]data[\\/]/.test(s) }); try { fs.rmSync(path.join(d, 'api', 'config.php'), { force: true }); } catch (e) {} return d; };

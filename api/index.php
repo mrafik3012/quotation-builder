@@ -463,8 +463,42 @@ function templates_route(string $m, ?string $b): void
     fail('Not found', 404);
 }
 
+/** E-mail a quote link to the client, mark it sent and log it. Fails (readable message) if the mail cannot be sent. */
+function send_quote_email(array $row, array $user, string $to, string $msg): void
+{
+    $id = (int)$row['id']; $cl = json_decode((string)$row['client_json'], true) ?: [];
+    $tok = ensure_share_token($row, $user);
+    $co = (string)(get_setting('company_name') ?: 'Infraura');
+    $msg = trim($msg);
+    $bodyHtml = '<p>Dear ' . htmlspecialchars($cl['contact_person'] ?: ($cl['name'] ?? ''), ENT_QUOTES, 'UTF-8') . ',</p>' . ($msg !== '' ? '<p>' . nl2br(htmlspecialchars($msg, ENT_QUOTES, 'UTF-8')) . '</p>' : '<p>Please find your quotation ' . htmlspecialchars($row['quote_no'], ENT_QUOTES, 'UTF-8') . ($row['title'] ? ' for <b>' . htmlspecialchars($row['title'], ENT_QUOTES, 'UTF-8') . '</b>' : '') . '.</p>')
+        . '<p>You can view it, choose an option and accept it online. It is valid until ' . htmlspecialchars(date('d-m-Y', strtotime((string)$row['valid_until'])), ENT_QUOTES, 'UTF-8') . '.</p>';
+    [$sent, $err] = send_mail($to, 'Quotation ' . $row['quote_no'] . ' from ' . $co, email_html('Your quotation ' . $row['quote_no'], $bodyHtml, ['View quotation', app_base_url() . '/view.html?t=' . $tok]));
+    if (!$sent) fail('The e-mail could not be sent: ' . $err);
+    if ($row['status'] === 'draft') q('UPDATE quotes SET status = ?, updated_at = ? WHERE id = ?', ['sent', now(), $id]);
+    log_event($row['quote_no'], (int)$row['rev'], 'emailed', ['to' => $to, 'by' => $user['name']], $user['name']);
+    audit($user, 'quote.email', $row['quote_no'] . ' -> ' . $to);
+}
+
 function quotes_route(string $m, ?string $b, ?string $c, array $user): void
 {
+    if ($m === 'POST' && $b === 'quick-roofing') {   // one step: size + material in, priced draft out; optionally sent to the client straight away
+        $d = body();
+        $out = roofing_quote_create($d, $user);
+        if (!empty($d['send'])) {
+            $row = q('SELECT * FROM quotes WHERE id = ?', [$out['quote_id']])->fetch();
+            $cl = json_decode((string)$row['client_json'], true) ?: [];
+            if (!filter_var($cl['email'] ?? '', FILTER_VALIDATE_EMAIL)) { $out['sent'] = false; $out['send_note'] = 'No client e-mail on file, so the draft was not sent.'; }
+            elseif (!mail_configured()) { $out['sent'] = false; $out['send_note'] = 'E-mail is not set up yet, so the draft was not sent.'; }
+            else {
+                $GLOBALS['FAIL_THROWS'] = true;
+                try { send_quote_email($row, $user, strtolower($cl['email']), ''); $out['sent'] = true; }
+                catch (ApiFailure $e) { $out['sent'] = false; $out['send_note'] = $e->getMessage(); }
+                $GLOBALS['FAIL_THROWS'] = false;
+            }
+        }
+        audit($user, 'quote.quick', $out['quote_no'] . (!empty($out['sent']) ? ' (sent)' : ''));
+        json_out($out, 201);
+    }
     if ($m === 'GET' && $b === null) {
         $where = [];
         $p = [];
@@ -546,16 +580,7 @@ function quotes_route(string $m, ?string $b, ?string $c, array $user): void
         $in = body(); $cl = json_decode((string)$row['client_json'], true) ?: [];
         $to = strtolower(str($in['to'] ?? ($cl['email'] ?? ''), 190));
         if (!filter_var($to, FILTER_VALIDATE_EMAIL)) fail('Enter a valid e-mail address for the client');
-        $tok = ensure_share_token($row, $user);
-        $co = (string)(get_setting('company_name') ?: 'Infraura');
-        $msg = trim(str($in['message'] ?? '', 2000));
-        $bodyHtml = '<p>Dear ' . htmlspecialchars($cl['contact_person'] ?: ($cl['name'] ?? ''), ENT_QUOTES, 'UTF-8') . ',</p>' . ($msg !== '' ? '<p>' . nl2br(htmlspecialchars($msg, ENT_QUOTES, 'UTF-8')) . '</p>' : '<p>Please find your quotation ' . htmlspecialchars($row['quote_no'], ENT_QUOTES, 'UTF-8') . ($row['title'] ? ' for <b>' . htmlspecialchars($row['title'], ENT_QUOTES, 'UTF-8') . '</b>' : '') . '.</p>')
-            . '<p>You can view it, choose an option and accept it online. It is valid until ' . htmlspecialchars(date('d-m-Y', strtotime((string)$row['valid_until'])), ENT_QUOTES, 'UTF-8') . '.</p>';
-        [$sent, $err] = send_mail($to, 'Quotation ' . $row['quote_no'] . ' from ' . $co, email_html('Your quotation ' . $row['quote_no'], $bodyHtml, ['View quotation', app_base_url() . '/view.html?t=' . $tok]));
-        if (!$sent) fail('The e-mail could not be sent: ' . $err);
-        if ($row['status'] === 'draft') q('UPDATE quotes SET status = ?, updated_at = ? WHERE id = ?', ['sent', now(), $id]);
-        log_event($row['quote_no'], (int)$row['rev'], 'emailed', ['to' => $to, 'by' => $user['name']], $user['name']);
-        audit($user, 'quote.email', $row['quote_no'] . ' -> ' . $to);
+        send_quote_email($row, $user, $to, str($in['message'] ?? '', 2000));
         $fresh = q('SELECT updated_at FROM quotes WHERE id = ?', [$id])->fetch();
         json_out(['ok' => true, 'to' => $to, 'updated_at' => $fresh['updated_at']]);
     }
