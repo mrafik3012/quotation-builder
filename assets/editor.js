@@ -22,7 +22,7 @@ function normalizeQuote() {
   d.tax_rate = d.tax_rate ?? 18;
   d.payment_schedule = Array.isArray(d.payment_schedule) ? d.payment_schedule : [];
   d.terms = Array.isArray(d.terms) ? d.terms : [];
-  d.source = d.source || ''; d.gst_mode = d.gst_mode || ''; d.hsn = d.hsn || ''; d.notes = d.notes || ''; d.scope = d.scope || ''; d.site_address = d.site_address || ''; d.area_sqft = d.area_sqft || '';
+  d.source = d.source || ''; d.lang = d.lang || ''; d.gst_mode = d.gst_mode || ''; d.hsn = d.hsn || ''; d.notes = d.notes || ''; d.scope = d.scope || ''; d.site_address = d.site_address || ''; d.area_sqft = d.area_sqft || '';
   d.options = Array.isArray(d.options) ? d.options.map(o => ({ name: o.name || '', note: o.note || '', sections: Array.isArray(o.sections) ? o.sections : [] })) : [];
   d.selected_option = d.options.length ? Math.min(Math.max(+d.selected_option || 0, 0), d.options.length - 1) : 0;
   d.pmc = d.pmc && typeof d.pmc === 'object' ? d.pmc : { mode: 'percent', base_cost: '', percent: 4, area: '', per_sqft: 60, months: '', monthly_fee: 85000 };
@@ -83,11 +83,12 @@ function drawEditor() {
    ${divChip(Q.division)} ${isNew ? '' : statusChip(Q.status)}</div>
   <div class="row noprint" style="margin-bottom:14px">
    ${ro ? '' : '<button class="btn pri" data-act="save">Save</button>'}
+   ${isNew || sup ? '' : '<button class="btn" data-act="emailq">Email to client</button>'}
    ${isNew || sup ? '' : '<button class="btn pri" data-act="share">' + (acc ? 'Client link' : 'Share with client') + '</button>'}
    ${Q.status === 'accepted' && Q.id ? (Q.project ? `<a class="btn pri" href="#/projects/${Q.project}">Open project</a>` : '<button class="btn pri" data-act="toproject">Convert to project</button>') : ''}
    ${Q.division === 'roofing' && !ro ? '<button class="btn" data-act="roofcalc">Roofing calculator</button>' : ''}
    ${isNew ? '' : `<a class="btn" href="#/quotes/${Q.id}/print">Preview / PDF</a>`}
-   ${isNew || sup || (acc && S.user.role !== 'admin') ? '' : `<select id="stsel" style="width:auto"><option disabled>Status…</option>${['draft', 'sent', 'accepted', 'rejected'].map(k => `<option value="${k}" ${Q.status === k ? 'selected' : ''}>${STATUS_LABEL[k]}</option>`).join('')}</select>`}
+   ${isNew || sup || (acc && S.user.role !== 'admin') ? '' : `<select id="stsel" aria-label="Quote status" style="width:auto"><option disabled>Status…</option>${['draft', 'sent', 'accepted', 'rejected'].map(k => `<option value="${k}" ${Q.status === k ? 'selected' : ''}>${STATUS_LABEL[k]}</option>`).join('')}</select>`}
    <span class="sp"></span>
    ${isNew || sup || Q.project ? '' : '<button class="btn" data-act="revise">New revision</button>'}
    ${Q.division === 'interior' && !ro ? '<button class="btn" data-act="rooms">+ Add rooms</button>' : ''}
@@ -101,19 +102,20 @@ function drawEditor() {
   <fieldset ${ro ? 'disabled' : ''}>
   ${isNew ? tplBar() : ''}
   <div class="grid2">
-   <div class="card"><h3>Client</h3>
-    <label class="f"><span>Saved client</span><select id="clientsel"><option value="">— Type new client below —</option>${S.clients.map(c => `<option value="${c.id}" ${Q.client_id == c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+   <div class="card"><h2>Client</h2>
+    <label class="f"><span>Saved client <input id="clientq" aria-label="Search all clients" placeholder="search all clients…" style="display:inline-block;width:170px;padding:2px 6px;margin-left:6px;font-size:12px"></span><select id="clientsel"><option value="">— Type new client below —</option>${clientOptions()}</select></label>
     <label class="f"><span>Client name *</span><input data-b="client.name" value="${esc(Q.client.name)}"></label>
     <div class="grid2"><label class="f"><span>Contact person</span><input data-b="client.contact_person" value="${esc(Q.client.contact_person)}"></label><label class="f"><span>Phone</span><input data-b="client.phone" value="${esc(Q.client.phone)}"></label>
     <label class="f"><span>Email</span><input data-b="client.email" value="${esc(Q.client.email)}"></label><label class="f"><span>GSTIN</span><input data-b="client.gstin" value="${esc(Q.client.gstin)}"></label></div>
     <label class="f"><span>Billing address</span><textarea data-b="client.address" rows="2">${esc(Q.client.address)}</textarea></label>
     <p class="muted small" style="margin:0">New client names are saved to your client list automatically. Editing here changes this quote only.</p></div>
-   <div class="card"><h3>Project</h3>
+   <div class="card"><h2>Project</h2>
     <label class="f"><span>Quotation title / project name</span><input data-b="title" value="${esc(Q.title)}" placeholder="e.g. Warehouse roofing — Phase 1"></label>
     <label class="f"><span>Site address</span><textarea data-b="data.site_address" rows="2">${esc(Q.data.site_address)}</textarea></label>
     <div class="grid3"><label class="f"><span>Built-up / project area (sq ft)</span><input type="number" step="any" min="0" data-b="data.area_sqft" value="${esc(Q.data.area_sqft)}"></label>
     <label class="f"><span>Quote date</span><input type="date" data-b="quote_date" value="${esc(Q.quote_date)}"></label>
     <label class="f"><span>Valid until</span><input type="date" data-b="valid_until" value="${esc(Q.valid_until)}"></label></div>
+    <label class="f"><span>Document language (labels on the printed quote)</span><select data-b="data.lang">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${Q.data.lang === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
     <label class="f"><span>Lead source (internal, for reports)</span><select data-b="data.source"><option value="">—</option>${['Referral', 'Walk-in', 'Website', 'WhatsApp', 'Instagram', 'Facebook', 'Google', 'Repeat client', 'Tender', 'Other'].map(x => `<option ${Q.data.source === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
     <label class="f"><span>Scope of work (printed above the items)</span><textarea data-b="data.scope" rows="3">${esc(Q.data.scope)}</textarea></label></div>
   </div>
@@ -122,7 +124,7 @@ function drawEditor() {
   <div class="row" style="margin-bottom:16px"><button class="btn" data-act="addsec">+ Add section</button><span class="muted small" id="rsq"></span></div>
   <div id="optbox"></div>
   <div class="grid2">
-   <div class="card"><h3>Summary</h3>
+   <div class="card"><h2>Summary</h2>
     <div class="grid3"><label class="f"><span>Discount type</span><select data-b="data.discount.type"><option value="percent" ${Q.data.discount.type !== 'flat' ? 'selected' : ''}>Percent %</option><option value="flat" ${Q.data.discount.type === 'flat' ? 'selected' : ''}>Flat ₹</option></select></label>
     <label class="f"><span>Discount</span><input type="number" step="any" min="0" data-b="data.discount.value" value="${esc(Q.data.discount.value)}"></label>
     <label class="f"><span>GST %</span><input type="number" step="any" min="0" data-b="data.tax_rate" value="${esc(Q.data.tax_rate)}"></label></div>
@@ -131,15 +133,15 @@ function drawEditor() {
     <label class="row small" style="gap:6px;margin-bottom:10px"><input type="checkbox" data-b="data.round_off" ${Q.data.round_off ? 'checked' : ''}> Round off grand total to nearest rupee</label>
     <table class="totals"><tr><td>Subtotal</td><td id="t-sub"></td></tr><tr><td>Discount</td><td id="t-disc"></td></tr><tr><td>Taxable amount</td><td id="t-taxable"></td></tr><tr><td id="t-gstl">GST</td><td id="t-tax"></td></tr><tr id="t-rorow"><td>Round off</td><td id="t-ro"></td></tr><tr class="g"><td>Grand total</td><td id="t-total"></td></tr></table>
     <p class="muted small" id="t-words" style="margin:8px 0 0"></p><div id="marginbox" class="noprint" style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)"></div></div>
-   <div class="card"><h3>Payment schedule</h3><div id="paybox"></div></div>
+   <div class="card"><h2>Payment schedule</h2><div id="paybox"></div></div>
   </div>
-  <div class="grid2"><div class="card"><h3>Terms &amp; conditions (one per line)</h3><textarea data-b="terms_text" rows="9">${esc(Q.data.terms.join('\n'))}</textarea></div>
-  <div class="card"><h3>Notes (printed at the end)</h3><textarea data-b="data.notes" rows="9">${esc(Q.data.notes)}</textarea></div></div>
+  <div class="grid2"><div class="card"><h2>Terms &amp; conditions (one per line)</h2><textarea data-b="terms_text" aria-label="Terms and conditions, one per line" rows="9">${esc(Q.data.terms.join('\n'))}</textarea></div>
+  <div class="card"><h2>Notes (printed at the end)</h2><textarea data-b="data.notes" aria-label="Notes printed at the end" rows="9">${esc(Q.data.notes)}</textarea></div></div>
   </fieldset>
   ${activityHtml()}
-  ${Q.revisions && Q.revisions.length > 1 ? `<div class="card noprint"><h3>Revision history</h3>${Q.revisions.map(r => `<div class="row" style="margin-bottom:4px"><a href="#/quotes/${r.id}">Rev ${r.rev}</a>${statusChip(r.status)}<span class="muted small">${esc(r.updated_at)}</span><span class="sp"></span><b>${inr0(r.total)}</b></div>`).join('')}</div>` : ''}`;
+  ${Q.revisions && Q.revisions.length > 1 ? `<div class="card noprint"><h2>Revision history</h2>${Q.revisions.map(r => `<div class="row" style="margin-bottom:4px"><a href="#/quotes/${r.id}">Rev ${r.rev}</a>${statusChip(r.status)}<span class="muted small">${esc(r.updated_at)}</span><span class="sp"></span><b>${inr0(r.total)}</b></div>`).join('')}</div>` : ''}`;
   drawPmc(); drawSections(); drawOptions(); drawPay(); recalc();
-  wireEditor();
+  wireEditor(); wireClientSearch();
 }
 
 function shareUrl(tok) { return location.href.split('#')[0].replace(/[^/]*$/, '') + 'view.html?t=' + tok; }
@@ -170,13 +172,13 @@ function activityHtml() {
     accepted: `<b class="good">Accepted</b> by ${esc(e.actor || '')}${e.detail && e.detail.option ? ' — ' + esc(e.detail.option) : ''}${e.has_signature ? ' (e-signed)' : ''}${e.detail && e.detail.note ? '<br><span class="muted">“' + esc(e.detail.note) + '”</span>' : ''}`,
     rejected: `<b class="bad">Declined</b>${e.actor ? ' by ' + esc(e.actor) : ''}${e.detail && e.detail.note ? '<br><span class="muted">“' + esc(e.detail.note) + '”</span>' : ''}` }[e.type] || esc(e.type));
   const views = Q.events.filter(e => e.type === 'view').length;
-  return `<div class="card noprint"><h3>Client activity${views ? ` · viewed ${views}×` : ''}</h3>${Q.events.map(e => `<div class="row small" style="margin-bottom:6px;align-items:flex-start"><span class="muted nw">${esc(e.created_at.slice(0, 16))}</span><span>${lab(e)}${e.rev ? ` <span class="muted">(Rev ${e.rev})</span>` : ''}</span></div>`).join('')}</div>`;
+  return `<div class="card noprint"><h2>Client activity${views ? ` · viewed ${views}×` : ''}</h2>${Q.events.map(e => `<div class="row small" style="margin-bottom:6px;align-items:flex-start"><span class="muted nw">${esc(e.created_at.slice(0, 16))}</span><span>${lab(e)}${e.rev ? ` <span class="muted">(Rev ${e.rev})</span>` : ''}</span></div>`).join('')}</div>`;
 }
 
 function tplBar() {
   const list = (S.templates || []).filter(t => t.division === Q.division);
   if (!list.length) return '';
-  return `<div class="card noprint"><h3>Start from a template</h3><div class="row"><select id="tplsel" style="max-width:360px">${list.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select><button type="button" class="btn" data-act="usetpl">Load template</button><span class="muted small">Fills the sections below - edit quantities and rates as needed. Save your own with “Save as template”.</span></div></div>`;
+  return `<div class="card noprint"><h2>Start from a template</h2><div class="row"><select id="tplsel" aria-label="Template" style="max-width:360px">${list.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select><button type="button" class="btn" data-act="usetpl">Load template</button><span class="muted small">Fills the sections below - edit quantities and rates as needed. Save your own with “Save as template”.</span></div></div>`;
 }
 function useTemplate() {
   const t = (S.templates || []).find(x => x.id == $('#tplsel').value); if (!t) return;
@@ -198,13 +200,27 @@ function saveTemplate() {
   });
 }
 
+function clientOptions(list) {
+  const all = (list || S.clients).slice();
+  if (Q.client_id && !all.find(c => c.id == Q.client_id)) all.unshift({ id: Q.client_id, name: Q.client.name || 'Client #' + Q.client_id });
+  return all.map(c => `<option value="${c.id}" ${Q.client_id == c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+}
+function wireClientSearch() {
+  const inp = $('#clientq'); if (!inp) return; let tm;
+  inp.oninput = () => { clearTimeout(tm); tm = setTimeout(() => guard(async () => {
+    const term = inp.value.trim(); const r = await api(`clients&per=30${term ? '&q=' + encodeURIComponent(term) : ''}`);
+    r.rows.forEach(c => { if (!S.clients.find(x => x.id === c.id)) S.clients.push(c); });
+    $('#clientsel').innerHTML = '<option value="">— Type new client below —</option>' + clientOptions(r.rows);
+  }), 250); };
+}
+
 function drawPmc() {
   const box = $('#pmcbox');
   if (Q.division !== 'pmc') { box.innerHTML = ''; return; }
   const p = Q.data.pmc;
   const mode = (k, l) => `<label class="${p.mode === k ? 'on' : ''}"><input type="radio" name="pmcmode" value="${k}" data-b="data.pmc.mode" ${p.mode === k ? 'checked' : ''}>${l}</label>`;
   const f = (k, l, step = 'any') => `<label class="f"><span>${l}</span><input type="number" step="${step}" min="0" data-b="data.pmc.${k}" data-pmc="1" value="${esc(p[k])}"></label>`;
-  box.innerHTML = `<div class="card"><h3>PMC fee calculator</h3>
+  box.innerHTML = `<div class="card"><h2>PMC fee calculator</h2>
   <div class="pmc-modes">${mode('percent', '% of project cost')}${mode('sqft', 'Per sq ft of area')}${mode('monthly', 'Monthly retainer')}</div>
   <div class="grid3">${p.mode === 'percent' ? f('base_cost', 'Estimated project cost (₹)') + f('percent', 'PMC fee (%)') : ''}
    ${p.mode === 'sqft' ? f('area', 'Built-up area (sq ft)') + f('per_sqft', 'Fee per sq ft (₹)') : ''}
@@ -218,13 +234,13 @@ function updPmc() { const e = $('#pmcfee'); if (e) e.textContent = inr(pmcFee())
 
 function secHtml(si) {
   const s = Q.data.sections[si];
-  return `<div class="sec" data-s="${si}"><div class="sec-h"><span class="muted">${si + 1}.</span><input data-sf="title" value="${esc(s.title)}" placeholder="Section title">
-   <span class="muted small nw" id="ss-${si}"></span>${Q.data.sections.length > 1 ? '<button class="btn sm dng" data-act="delsec" title="Remove section">✕</button>' : ''}</div>
-  <div class="scroll"><table class="items"><thead><tr><th>#</th><th>Description</th><th>Unit</th><th>Qty</th><th>Rate (₹)</th><th title="Internal - never printed">Cost (₹)</th><th class="r">Amount (₹)</th><th></th></tr></thead><tbody>
+  return `<div class="sec" data-s="${si}"><div class="sec-h"><span class="muted">${si + 1}.</span><input data-sf="title" aria-label="Section title" value="${esc(s.title)}" placeholder="Section title">
+   <span class="muted small nw" id="ss-${si}"></span>${Q.data.sections.length > 1 ? '<button class="btn sm dng" data-act="delsec" title="Remove section" aria-label="Remove section">✕</button>' : ''}</div>
+  <div class="scroll"><table class="items"><thead><tr><th>#</th><th>Description</th><th>Unit</th><th>Qty</th><th>Rate (₹)</th><th title="Internal - never printed">Cost (₹)</th><th class="r">Amount (₹)</th><th><span class="sr">Actions</span></th></tr></thead><tbody>
   ${s.items.map((it, ii) => `<tr data-i="${ii}"><td class="muted" style="width:38px;padding-top:11px">${si + 1}.${ii + 1}</td>
-   <td><textarea data-f="desc" rows="1">${esc(it.desc)}</textarea></td><td style="width:84px"><input data-f="unit" list="units" value="${esc(it.unit)}"></td>
-   <td style="width:96px"><input data-f="qty" type="number" step="any" min="0" value="${esc(it.qty)}"></td><td style="width:116px"><input data-f="rate" type="number" step="any" min="0" value="${esc(it.rate)}"></td><td style="width:100px"><input data-f="cost" type="number" step="any" min="0" value="${esc(it.cost ?? '')}" title="Your cost - internal only" style="color:var(--mut)"></td>
-   <td class="amt" style="width:120px" id="a-${si}-${ii}"></td><td style="width:34px"><button class="btn sm dng" data-act="delitem" title="Remove">✕</button></td></tr>`).join('')}
+   <td><textarea data-f="desc" aria-label="Description" rows="1">${esc(it.desc)}</textarea></td><td style="width:84px"><input data-f="unit" aria-label="Unit" list="units" value="${esc(it.unit)}"></td>
+   <td style="width:96px"><input data-f="qty" aria-label="Quantity" type="number" step="any" min="0" value="${esc(it.qty)}"></td><td style="width:116px"><input data-f="rate" aria-label="Rate" type="number" step="any" min="0" value="${esc(it.rate)}"></td><td style="width:100px"><input data-f="cost" aria-label="Cost (internal, never printed)" type="number" step="any" min="0" value="${esc(it.cost ?? '')}" title="Your cost - internal only" style="color:var(--mut)"></td>
+   <td class="amt" style="width:120px" id="a-${si}-${ii}"></td><td style="width:34px"><button class="btn sm dng" data-act="delitem" title="Remove" aria-label="Remove item">✕</button></td></tr>`).join('')}
   </tbody></table></div>
   <div class="sec-f"><button class="btn sm" data-act="addrate">+ From rate card</button><button class="btn sm" data-act="additem">+ Custom item</button>${Q.division === 'interior' || (s.images || []).length ? '<button class="btn sm" data-act="secimg" title="Add a photo or render shown under this section on the quotation">+ Image</button>' : ''}${(s.images || []).map((im, k) => `<span><img src="${im}" style="height:34px;border-radius:4px;vertical-align:middle"><a href="#" data-act="delimg" data-k="${k}" style="margin-left:2px" title="Remove">✕</a></span>`).join('')}</div></div>`;
 }
@@ -237,8 +253,8 @@ function growTa(t) { t.style.height = 'auto'; t.style.height = Math.max(34, t.sc
 
 function drawPay() {
   const pay = Q.data.payment_schedule;
-  $('#paybox').innerHTML = `<table class="items" style="min-width:0"><tbody>${pay.map((p, i) => `<tr data-p="${i}"><td><input data-pf="label" value="${esc(p.label)}" placeholder="Stage"></td>
-  <td style="width:78px"><input data-pf="percent" type="number" step="any" min="0" value="${esc(p.percent)}"></td><td class="amt" style="width:110px" id="pa-${i}"></td><td style="width:34px"><button class="btn sm dng" data-act="delpay">✕</button></td></tr>`).join('')}</tbody></table>
+  $('#paybox').innerHTML = `<table class="items" style="min-width:0"><tbody>${pay.map((p, i) => `<tr data-p="${i}"><td><input data-pf="label" aria-label="Payment stage" value="${esc(p.label)}" placeholder="Stage"></td>
+  <td style="width:78px"><input data-pf="percent" aria-label="Percent of total" type="number" step="any" min="0" value="${esc(p.percent)}"></td><td class="amt" style="width:110px" id="pa-${i}"></td><td style="width:34px"><button class="btn sm dng" data-act="delpay" aria-label="Remove stage">✕</button></td></tr>`).join('')}</tbody></table>
   <div class="row" style="margin-top:8px"><button class="btn sm" data-act="addpay">+ Add stage</button><span class="sp"></span><span class="small" id="paytot"></span></div>`;
   recalc();
 }
@@ -319,6 +335,7 @@ function wireEditor() {
     if (a === 'latest') { e.preventDefault(); const l = Q.revisions.find(r => r.status !== 'superseded') || Q.revisions[0]; if (l) location.hash = '#/quotes/' + l.id; }
     else if (a === 'save') guard(saveQuote);
     else if (a === 'share') guard(shareQuote);
+    else if (a === 'emailq') guard(async () => { if (Q.status !== 'accepted') await ensureSaved(); emailQuoteDialog(); });
     else if (a === 'toproject') guard(async () => { await ensureSaved(); const r = await api('projects', 'POST', { quote_id: Q.id }); toast('Project created', 'ok'); location.hash = '#/projects/' + r.id; });
     else if (a === 'rooms') roomsModal();
     else if (a === 'csv') exportLines();
@@ -396,7 +413,7 @@ function applyPmc() {
 
 function pickRates(si, opt) {
   let div = Q.division, term = '';
-  const m = openModal(`<h2>Add from rate card</h2><div class="row"><select id="pd" style="width:auto">${divOptions(div, true).replace('All divisions', 'All divisions')}</select><input id="pq" placeholder="Search items…" style="flex:1" autofocus></div>
+  const m = openModal(`<h2>Add from rate card</h2><div class="row"><select id="pd" aria-label="Division" style="width:auto">${divOptions(div, true).replace('All divisions', 'All divisions')}</select><input id="pq" aria-label="Search rate card" placeholder="Search items…" style="flex:1" autofocus></div>
   <div class="pick" id="pl"></div><div class="row" style="margin-top:12px"><span class="muted small">Click an item to add it (quantity 1). You can add several, then edit quantities in the quote.</span><span class="sp"></span><button class="btn pri" id="done">Done</button></div>`, true);
   $('#pd', m.el).value = div;
   const draw = () => {
@@ -429,10 +446,10 @@ async function saveQuote() {
   const body = { division: Q.division, client_id: Q.client_id || null, client: Q.client, title: Q.title, quote_date: Q.quote_date, valid_until: Q.valid_until, data: d, updated_at: Q.updated_at };
   if (!Q.id) {
     const r = await api('quotes', 'POST', body);
-    window.__dirty = false; S.clients = await api('clients'); toast('Saved as ' + r.quote_no, 'ok'); location.hash = '#/quotes/' + r.id;
+    window.__dirty = false; await refreshClients(); toast('Saved as ' + r.quote_no, 'ok'); location.hash = '#/quotes/' + r.id;
   } else {
     const r = await api('quotes/' + Q.id, 'PUT', body);
-    window.__dirty = false; Q.client_id = r.client_id || Q.client_id; Q.updated_at = r.updated_at; S.clients = await api('clients'); toast('Saved', 'ok');
+    window.__dirty = false; Q.client_id = r.client_id || Q.client_id; Q.updated_at = r.updated_at; await refreshClients(); toast('Saved', 'ok');
   }
   return true;
 }
@@ -461,7 +478,7 @@ function gstRowsHtml(d, t, mode) {
   return `<tr><td>GST @ ${rt}%</td><td>${fmt(t.tax)}</td></tr>`;
 }
 function quoteDocHtml(s) {
-  const d = Q.data, t = totals(d), c = Q.client, gm = gstMode(d, s, c);
+  const d = Q.data, t = totals(d), c = Q.client, gm = gstMode(d, s, c), lang = d.lang || '';
   let body = '';
   d.sections.forEach((sec, si) => {
     if (!sec.items.length) return;
@@ -473,35 +490,35 @@ function quoteDocHtml(s) {
       const a = r2(n(it.qty) * n(it.rate)); st += a;
       body += `<tr><td>${si + 1}.${ii + 1}</td><td>${esc(it.desc).replace(/\n/g, '<br>')}</td><td>${esc(it.unit)}</td><td class="num">${esc(n(it.qty))}</td><td class="num">${fmt(n(it.rate))}</td><td class="num">${fmt(a)}</td></tr>`;
     });
-    if (multi) body += `<tr class="ss"><td colspan="5" class="num">Sub-total — ${esc(sec.title)}</td><td class="num">${fmt(st)}</td></tr>`;
+    if (multi) body += `<tr class="ss"><td colspan="5" class="num">${L('Sub-total', lang)} — ${esc(sec.title)}</td><td class="num">${fmt(st)}</td></tr>`;
   });
   let optHtml = '';
   if (d.options.length) {
-    const L = i => String.fromCharCode(65 + i);
+    const OL = i => String.fromCharCode(65 + i);
     d.options.forEach((op, oi) => {
       const secs = op.sections.filter(x => x.items.length); if (!secs.length) return;
-      body += `<tr class="st"><td colspan="6">Option ${L(oi)} — ${esc(op.name)}${d.selected_option === oi ? ' (selected)' : ''}${op.note ? ' · <span style="font-weight:400">' + esc(op.note) + '</span>' : ''}</td></tr>`;
+      body += `<tr class="st"><td colspan="6">${L('Option', lang)} ${OL(oi)} — ${esc(op.name)}${d.selected_option === oi ? ' (selected)' : ''}${op.note ? ' · <span style="font-weight:400">' + esc(op.note) + '</span>' : ''}</td></tr>`;
       let ot = 0;
-      secs.forEach(sec => sec.items.forEach((it, ii) => { const a = r2(n(it.qty) * n(it.rate)); ot += a; body += `<tr><td>${L(oi)}.${ii + 1}</td><td>${esc(it.desc).replace(/\n/g, '<br>')}</td><td>${esc(it.unit)}</td><td class="num">${esc(n(it.qty))}</td><td class="num">${fmt(n(it.rate))}</td><td class="num">${fmt(a)}</td></tr>`; }));
-      body += `<tr class="ss"><td colspan="5" class="num">Sub-total — Option ${L(oi)}</td><td class="num">${fmt(ot)}</td></tr>`;
+      secs.forEach(sec => sec.items.forEach((it, ii) => { const a = r2(n(it.qty) * n(it.rate)); ot += a; body += `<tr><td>${OL(oi)}.${ii + 1}</td><td>${esc(it.desc).replace(/\n/g, '<br>')}</td><td>${esc(it.unit)}</td><td class="num">${esc(n(it.qty))}</td><td class="num">${fmt(n(it.rate))}</td><td class="num">${fmt(a)}</td></tr>`; }));
+      body += `<tr class="ss"><td colspan="5" class="num">${L('Sub-total', lang)} — ${L('Option', lang)} ${OL(oi)}</td><td class="num">${fmt(ot)}</td></tr>`;
     });
-    optHtml = `<h4>Choose your option</h4><table class="q"><thead><tr><th>Option</th><th>Highlights</th><th class="num">Package (₹)</th><th class="num">Quote total incl. GST (₹)</th></tr></thead><tbody>${d.options.map((op, oi) => `<tr${d.selected_option === oi ? ' class="st"' : ''}><td>${L(oi)} — ${esc(op.name)}${d.selected_option === oi ? ' ✓' : ''}</td><td>${esc(op.note)}</td><td class="num">${fmt(secSum(op.sections))}</td><td class="num">${fmt(optionTotals(d, oi).total)}</td></tr>`).join('')}</tbody></table>`;
+    optHtml = `<h2>${L('Choose your option', lang)}</h2><table class="q"><thead><tr><th>${L('Option', lang)}</th><th>${L('Highlights', lang)}</th><th class="num">${L('Package (₹)', lang)}</th><th class="num">${L('Quote total incl. GST (₹)', lang)}</th></tr></thead><tbody>${d.options.map((op, oi) => `<tr${d.selected_option === oi ? ' class="st"' : ''}><td>${OL(oi)} — ${esc(op.name)}${d.selected_option === oi ? ' ✓' : ''}</td><td>${esc(op.note)}</td><td class="num">${fmt(secSum(op.sections))}</td><td class="num">${fmt(optionTotals(d, oi).total)}</td></tr>`).join('')}</tbody></table>`;
   }
-  const pay = d.payment_schedule.length ? `<h4>Payment schedule</h4><table class="q"><thead><tr><th>Stage</th><th class="num">%</th><th class="num">Amount (₹)</th></tr></thead><tbody>${d.payment_schedule.map(p => `<tr><td>${esc(p.label)}</td><td class="num">${esc(n(p.percent))}%</td><td class="num">${fmt(r2(t.total * n(p.percent) / 100))}</td></tr>`).join('')}</tbody></table>` : '';
+  const pay = d.payment_schedule.length ? `<h2>${L('Payment schedule', lang)}</h2><table class="q"><thead><tr><th>${L('Stage', lang)}</th><th class="num">%</th><th class="num">${L('Amount (₹)', lang)}</th></tr></thead><tbody>${d.payment_schedule.map(p => `<tr><td>${esc(p.label)}</td><td class="num">${esc(n(p.percent))}%</td><td class="num">${fmt(r2(t.total * n(p.percent) / 100))}</td></tr>`).join('')}</tbody></table>` : '';
   return `<div class="doc">
    <div class="hd"><div class="co"><img src="${s.company_logo ? esc(s.company_logo) : 'assets/logo.png'}" alt=""><div><h2>${esc(s.company_name)}</h2><div>${esc(s.company_tagline)}</div><div>${esc(s.company_address)}</div><div>${[s.company_phone && 'Phone: ' + s.company_phone, s.company_email && 'Email: ' + s.company_email, s.company_gstin && 'GSTIN: ' + s.company_gstin].filter(Boolean).map(esc).join(' · ')}</div></div></div>
-   <div class="qt"><h1>QUOTATION</h1><table><tr><td>Quote no.</td><td><b>${esc(Q.quote_no)}</b></td></tr>${Q.rev ? `<tr><td>Revision</td><td>${Q.rev}</td></tr>` : ''}<tr><td>Date</td><td>${fdate(Q.quote_date)}</td></tr><tr><td>Valid until</td><td>${fdate(Q.valid_until)}</td></tr><tr><td>Division</td><td>${esc(DIVS[Q.division])}</td></tr></table></div></div>
-   <div class="two"><div class="box"><h5>Quotation for</h5><div><b>${esc(c.name)}</b>${c.contact_person ? '\nAttn: ' + esc(c.contact_person) : ''}${c.address ? '\n' + esc(c.address) : ''}${c.phone ? '\nPhone: ' + esc(c.phone) : ''}${c.email ? '\nEmail: ' + esc(c.email) : ''}${c.gstin ? '\nGSTIN: ' + esc(c.gstin) : ''}</div></div>
-   <div class="box"><h5>Project</h5><div><b>${esc(Q.title || '—')}</b>${d.site_address ? '\nSite: ' + esc(d.site_address) : ''}${n(d.area_sqft) ? '\nArea: ' + esc(n(d.area_sqft)) + ' sq ft' : ''}</div></div></div>
-   ${d.scope ? `<h4>Scope of work</h4><pre>${esc(d.scope)}</pre>` : ''}
-   <table class="q" style="margin-top:10px"><thead><tr><th style="width:36px">#</th><th>Description</th><th style="width:48px">Unit</th><th class="num" style="width:56px">Qty</th><th class="num" style="width:84px">Rate (₹)</th><th class="num" style="width:100px">Amount (₹)</th></tr></thead><tbody>${body || '<tr><td colspan="6">No items</td></tr>'}</tbody></table>
-   <div class="sum"><div class="w">${esc(amountWords(t.total))}</div><table><tr><td>Subtotal</td><td>${fmt(t.sub)}</td></tr>${t.disc ? `<tr><td>Discount${d.discount.type === 'percent' ? ' (' + n(d.discount.value) + '%)' : ''}</td><td>− ${fmt(t.disc)}</td></tr><tr><td>Taxable amount</td><td>${fmt(t.taxable)}</td></tr>` : ''}${gstRowsHtml(d, t, gm)}${d.round_off && t.ro ? `<tr><td>Round off</td><td>${t.ro < 0 ? '− ' : ''}${fmt(Math.abs(t.ro))}</td></tr>` : ''}<tr class="g"><td>Grand total (₹)${d.options.length ? '<br><span style="font-weight:400;font-size:10px">Option ' + String.fromCharCode(65 + d.selected_option) + ' — ' + esc(d.options[d.selected_option].name) + '</span>' : ''}</td><td>${fmt(t.total)}</td></tr></table></div>
+   <div class="qt"><h1>${L('QUOTATION', lang)}</h1><table><tr><td>${L('Quote no.', lang)}</td><td><b>${esc(Q.quote_no)}</b></td></tr>${Q.rev ? `<tr><td>${L('Revision', lang)}</td><td>${Q.rev}</td></tr>` : ''}<tr><td>${L('Date', lang)}</td><td>${fdate(Q.quote_date)}</td></tr><tr><td>${L('Valid until', lang)}</td><td>${fdate(Q.valid_until)}</td></tr><tr><td>${L('Division', lang)}</td><td>${esc(DIVS[Q.division])}</td></tr></table></div></div>
+   <div class="two"><div class="box"><h2 class="bx">${L('Quotation for', lang)}</h2><div><b>${esc(c.name)}</b>${c.contact_person ? '\nAttn: ' + esc(c.contact_person) : ''}${c.address ? '\n' + esc(c.address) : ''}${c.phone ? '\nPhone: ' + esc(c.phone) : ''}${c.email ? '\nEmail: ' + esc(c.email) : ''}${c.gstin ? '\nGSTIN: ' + esc(c.gstin) : ''}</div></div>
+   <div class="box"><h2 class="bx">${L('Project', lang)}</h2><div><b>${esc(Q.title || '—')}</b>${d.site_address ? '\nSite: ' + esc(d.site_address) : ''}${n(d.area_sqft) ? '\nArea: ' + esc(n(d.area_sqft)) + ' sq ft' : ''}</div></div></div>
+   ${d.scope ? `<h2>${L('Scope of work', lang)}</h2><pre>${esc(d.scope)}</pre>` : ''}
+   <table class="q" style="margin-top:10px"><thead><tr><th style="width:36px">#</th><th>${L('Description', lang)}</th><th style="width:48px">${L('Unit', lang)}</th><th class="num" style="width:56px">${L('Qty', lang)}</th><th class="num" style="width:84px">${L('Rate (₹)', lang)}</th><th class="num" style="width:100px">${L('Amount (₹)', lang)}</th></tr></thead><tbody>${body || '<tr><td colspan="6">No items</td></tr>'}</tbody></table>
+   <div class="sum"><div class="w">${esc(amountWords(t.total))}</div><table><tr><td>${L('Subtotal', lang)}</td><td>${fmt(t.sub)}</td></tr>${t.disc ? `<tr><td>${L('Discount', lang)}${d.discount.type === 'percent' ? ' (' + n(d.discount.value) + '%)' : ''}</td><td>− ${fmt(t.disc)}</td></tr><tr><td>${L('Taxable amount', lang)}</td><td>${fmt(t.taxable)}</td></tr>` : ''}${gstRowsHtml(d, t, gm)}${d.round_off && t.ro ? `<tr><td>${L('Round off', lang)}</td><td>${t.ro < 0 ? '− ' : ''}${fmt(Math.abs(t.ro))}</td></tr>` : ''}<tr class="g"><td>${L('Grand total (₹)', lang)}${d.options.length ? '<br><span style="font-weight:400;font-size:10px">Option ' + String.fromCharCode(65 + d.selected_option) + ' — ' + esc(d.options[d.selected_option].name) + '</span>' : ''}</td><td>${fmt(t.total)}</td></tr></table></div>
    ${optHtml}
    ${pay}
-   ${d.terms.length ? `<h4>Terms &amp; conditions</h4><ol>${d.terms.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
-   ${d.notes ? `<h4>Notes</h4><pre>${esc(d.notes)}</pre>` : ''}
-   ${s.bank_details && s.bank_details.replace(/[\s\w ]*:\s*/g, '').trim() ? `<h4>Bank details</h4><pre>${esc(s.bank_details)}</pre>` : ''}
-   <div class="sig"><div>Client acceptance &amp; date</div><div>For ${esc(s.company_name)}${s.signatory ? '<br><b>' + esc(s.signatory) + '</b>' : ''}<br>Authorised signatory</div></div>
+   ${d.terms.length ? `<h2>${L('Terms & conditions', lang)}</h2><ol>${d.terms.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
+   ${d.notes ? `<h2>${L('Notes', lang)}</h2><pre>${esc(d.notes)}</pre>` : ''}
+   ${s.bank_details && s.bank_details.replace(/[\s\w ]*:\s*/g, '').trim() ? `<h2>${L('Bank details', lang)}</h2><pre>${esc(s.bank_details)}</pre>` : ''}
+   <div class="sig"><div>${L('Client acceptance & date', lang)}</div><div>${L('For', lang)} ${esc(s.company_name)}${s.signatory ? '<br><b>' + esc(s.signatory) + '</b>' : ''}<br>${L('Authorised signatory', lang)}</div></div>
    <div class="foot">${d.hsn ? 'HSN / SAC: ' + esc(d.hsn) + ' · ' : ''}${gm === 'intra' ? 'Intra-state supply (CGST + SGST)' : gm === 'inter' ? 'Inter-state supply (IGST)' : ''}${d.hsn || gm ? '<br>' : ''}This is a computer-generated quotation · ${esc(Q.quote_no)}</div></div>`;
 }
 

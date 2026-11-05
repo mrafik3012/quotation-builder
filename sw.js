@@ -2,7 +2,7 @@
 /* Service worker: makes the app installable and keeps the app shell available offline.
    The API is never cached - quotes always come live from the server. */
 const CACHE = 'infraura-shell-v1';
-const SHELL = ['index.html', 'assets/style.css', 'assets/app.js', 'assets/options.js', 'assets/editor.js', 'assets/roof.js', 'assets/projects.js', 'assets/reports.js', 'assets/ai.js', 'assets/logo.png', 'assets/favicon.png'];
+const SHELL = ['index.html', 'assets/style.css', 'assets/app.js', 'assets/options.js', 'assets/editor.js', 'assets/roof.js', 'assets/projects.js', 'assets/reports.js', 'assets/ai.js', 'assets/i18n.js', 'assets/account.js', 'assets/logo.png', 'assets/favicon.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => Promise.all(SHELL.map(u => c.add(u).catch(() => null)))).then(() => self.skipWaiting()));

@@ -3,10 +3,20 @@ declare(strict_types=1);
 require_once __DIR__ . '/lib.php';
 // Shared business logic used by the web API (index.php) and the MCP endpoint (mcp.php).
 
-function all_settings(): array
+function all_settings_raw(): array
 {
     $out = [];
     foreach (q('SELECT k, v FROM settings')->fetchAll() as $r) $out[$r['k']] = (string)$r['v'];
+    return $out;
+}
+
+/** Settings for the browser. Secrets (SMTP password, cron key) never go to staff; admins see the password masked. */
+function all_settings(bool $admin = false): array
+{
+    $out = all_settings_raw();
+    unset($out['schema_v']);
+    if (!$admin) { unset($out['smtp_pass'], $out['cron_key'], $out['smtp_user'], $out['smtp_host']); }
+    elseif (($out['smtp_pass'] ?? '') !== '') $out['smtp_pass'] = '********';
     return $out;
 }
 
@@ -137,6 +147,7 @@ function clean_quote_input(array $d, ?string $existingDivision = null): array
         'gst_mode' => in_array($data['gst_mode'] ?? '', ['intra', 'inter'], true) ? $data['gst_mode'] : '',
         'hsn' => str($data['hsn'] ?? '', 20),
         'source' => str($data['source'] ?? '', 40),
+        'lang' => in_array($data['lang'] ?? '', ['hi', 'ta', 'te', 'kn', 'ml'], true) ? $data['lang'] : '',
     ];
     $lines = 0;
     foreach (effective_sections($clean) as $s) $lines += count($s['items']);
@@ -251,6 +262,7 @@ function dashboard(): array
         'recent' => array_map(fn($r) => quote_row_out($r + ['subtotal' => 0, 'discount' => 0, 'tax' => 0, 'round_off' => 0], false), $recent),
         'clients' => (int)q('SELECT COUNT(*) AS n FROM clients')->fetch()['n'],
         'receivables' => receivables_summary(),
+        'amc_due' => q("SELECT p.id, p.name, p.amc_end, p.amc_note, c.name AS client_name, c.phone AS client_phone FROM projects p LEFT JOIN clients c ON c.id = p.client_id WHERE p.amc_end IS NOT NULL AND p.amc_end <> '' AND p.amc_end >= ? AND p.amc_end <= ? ORDER BY p.amc_end LIMIT 20", [date('Y-m-d', strtotime('-14 days')), date('Y-m-d', strtotime('+60 days'))])->fetchAll(),
         'follow_up' => array_map(fn($r) => quote_row_out($r + ['subtotal' => 0, 'discount' => 0, 'tax' => 0, 'round_off' => 0], false),
             q("SELECT q.id,q.quote_no,q.rev,q.division,q.client_json,q.title,q.status,q.quote_date,q.valid_until,q.total,q.updated_at,
                 (SELECT COUNT(*) FROM quote_events e WHERE e.quote_no = q.quote_no AND e.type = 'view') AS views
@@ -291,16 +303,16 @@ function create_quote(array $user, array $in): array
 
 // ---------------- roofing calculator (server-side port of assets/roof.js; parity-tested) ----------------
 const ROOF_MATS = [
-    'gi'      => ['label' => 'GI colour coated (PPGI) 0.40 mm', 'match' => 'GI colour coated sheet 0.40', 'def' => 88],
-    'gi55'    => ['label' => 'GI colour coated (PPGI) 0.55 mm', 'match' => 'GI colour coated sheet 0.55', 'def' => 118],
-    'galv'    => ['label' => 'Galvalume 0.45 mm', 'match' => 'Galvalume (Zn-Al) sheet 0.45', 'def' => 100],
-    'upvc'    => ['label' => 'UPVC trapezoidal 2.5 mm', 'match' => 'UPVC trapezoidal roofing sheet 2.5', 'def' => 140],
-    'upvcasa' => ['label' => 'UPVC ASA tile-profile 3 mm', 'match' => 'UPVC tile-profile (ASA', 'def' => 175],
-    'puf30'   => ['label' => 'PUF sandwich panel 30 mm', 'match' => 'PUF sandwich panel 30 mm', 'def' => 215],
-    'puf50'   => ['label' => 'PUF sandwich panel 50 mm', 'match' => 'PUF sandwich panel 50 mm', 'def' => 270],
-    'puf75'   => ['label' => 'PUF sandwich panel 75 mm', 'match' => 'PUF sandwich panel 75 mm', 'def' => 335],
-    'alu'     => ['label' => 'Aluminium roofing 0.60 mm coated', 'match' => 'Aluminium roofing sheet 0.60', 'def' => 195],
-    'poly'    => ['label' => 'Polycarbonate multiwall 6 mm', 'match' => 'Polycarbonate multiwall sheet 6', 'def' => 150],
+    'gi'      => ['label' => 'GI colour coated (PPGI) 0.40 mm', 'short' => 'GI', 'match' => 'GI colour coated sheet 0.40', 'def' => 88],
+    'gi55'    => ['label' => 'GI colour coated (PPGI) 0.55 mm', 'short' => 'GI 0.55', 'match' => 'GI colour coated sheet 0.55', 'def' => 118],
+    'galv'    => ['label' => 'Galvalume 0.45 mm', 'short' => 'Galvalume', 'match' => 'Galvalume (Zn-Al) sheet 0.45', 'def' => 100],
+    'upvc'    => ['label' => 'UPVC trapezoidal 2.5 mm', 'short' => 'UPVC', 'match' => 'UPVC trapezoidal roofing sheet 2.5', 'def' => 140],
+    'upvcasa' => ['label' => 'UPVC ASA tile-profile 3 mm', 'short' => 'UPVC ASA', 'match' => 'UPVC tile-profile (ASA', 'def' => 175],
+    'puf30'   => ['label' => 'PUF sandwich panel 30 mm', 'short' => 'PUF 30', 'match' => 'PUF sandwich panel 30 mm', 'def' => 215],
+    'puf50'   => ['label' => 'PUF sandwich panel 50 mm', 'short' => 'PUF 50', 'match' => 'PUF sandwich panel 50 mm', 'def' => 270],
+    'puf75'   => ['label' => 'PUF sandwich panel 75 mm', 'short' => 'PUF 75', 'match' => 'PUF sandwich panel 75 mm', 'def' => 335],
+    'alu'     => ['label' => 'Aluminium roofing 0.60 mm coated', 'short' => 'Aluminium', 'match' => 'Aluminium roofing sheet 0.60', 'def' => 195],
+    'poly'    => ['label' => 'Polycarbonate multiwall 6 mm', 'short' => 'Polycarbonate', 'match' => 'Polycarbonate multiwall sheet 6', 'def' => 150],
 ];
 const ROOF_PARTS = [
     'purlin' => ['match' => 'GI / MS purlins (Z / C)', 'def' => 88],
@@ -349,7 +361,7 @@ function roof_geometry(array $p): ?array
     return [
         'plan' => $plan, 'area' => $area, 'billed' => $billed, 'slopeLen' => $slopeLen, 'slopes' => $slopes, 'roofLen' => $roofLen, 'ridge' => $ridge, 'barge' => $barge,
         'gutterRft' => $gut ? $gutterRft : 0, 'pipes' => $pipes, 'pipeRft' => $pipes * max(num($p['height'] ?? 0), 0),
-        'purlinKg' => $purlinRft * num($p['purlinkg'] ?? 0), 'purlinRft' => $purlinRft, 'frameKg' => $plan * num($p['framekg'] ?? 0),
+        'purlinKg' => ($p['structure'] ?? 'yes') === 'no' ? 0 : $purlinRft * num($p['purlinkg'] ?? 0), 'purlinRft' => $purlinRft, 'frameKg' => ($p['structure'] ?? 'yes') === 'no' ? 0 : $plan * num($p['framekg'] ?? 0),
         'screws' => (int)ceil($billed * num($p['screws'] ?? 0)), 'turbo' => $turboEvery > 0 ? max((int)round($plan / $turboEvery), 0) : 0,
         'skyArea' => $area * max(num($p['sky'] ?? 0), 0) / 100,
     ];
@@ -357,8 +369,8 @@ function roof_geometry(array $p): ?array
 
 function roof_defaults(array $in): array
 {
-    $d = ['type' => 'gable', 'len' => 0, 'wid' => 0, 'slope' => 10, 'eave' => 1, 'gable' => 0.5, 'height' => 12, 'waste' => 7, 'pspace' => 4, 'purlinkg' => 1.5, 'framekg' => 2.5, 'screws' => 0.7, 'turbo' => 1000, 'sky' => 0, 'gutter' => 'yes'];
-    foreach ($d as $k => $v) if (array_key_exists($k, $in) && $in[$k] !== '' && $in[$k] !== null) $d[$k] = in_array($k, ['type', 'gutter'], true) ? (string)$in[$k] : num($in[$k]);
+    $d = ['structure' => 'yes', 'type' => 'gable', 'len' => 0, 'wid' => 0, 'slope' => 10, 'eave' => 1, 'gable' => 0.5, 'height' => 12, 'waste' => 7, 'pspace' => 4, 'purlinkg' => 1.5, 'framekg' => 2.5, 'screws' => 0.7, 'turbo' => 1000, 'sky' => 0, 'gutter' => 'yes'];
+    foreach ($d as $k => $v) if (array_key_exists($k, $in) && $in[$k] !== '' && $in[$k] !== null) $d[$k] = in_array($k, ['type', 'gutter', 'structure'], true) ? (string)$in[$k] : num($in[$k]);
     if (!in_array($d['type'], ['gable', 'shed', 'flat'], true)) $d['type'] = 'gable';
     return $d;
 }
@@ -414,4 +426,67 @@ function roof_calc(array $in, array $mats, array $rates, array $custom = []): ?a
         $packages[] = ['material' => $key, 'label' => $m['label'], 'sheet_rate_per_sqft' => $rate($key, true), 'lines' => $items, 'total_before_gst' => $total, 'per_sqft_of_plan_area' => $g['plan'] > 0 ? money($total / $g['plan']) : 0];
     }
     return ['inputs' => $p, 'geometry' => array_map(fn($v) => is_float($v) ? round($v, 2) : $v, $g), 'packages' => $packages];
+}
+
+/** Folder the app lives in as seen from the web (e.g. "" at the domain root, "/quotes" in a sub-folder). Independent of URL rewriting. */
+function app_base_path(): string
+{
+    $dr = realpath((string)($_SERVER['DOCUMENT_ROOT'] ?? '')) ?: '';
+    $app = realpath(dirname(__DIR__)) ?: '';
+    if ($dr !== '' && $app !== '' && strpos(str_replace('\\', '/', $app) . '/', str_replace('\\', '/', $dr) . '/') === 0) return rtrim(substr(str_replace('\\', '/', $app), strlen(str_replace('\\', '/', $dr))), '/');
+    return rtrim(dirname(dirname((string)($_SERVER['SCRIPT_NAME'] ?? '/api/x.php'))), '/\\');
+}
+
+function app_base_url(): string
+{
+    $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+    return ($https ? 'https://' : 'http://') . ($_SERVER['HTTP_HOST'] ?? 'localhost') . app_base_path();
+}
+
+/** Create (or reuse) the private client link for a quote family; moves a draft to "sent". Returns the token. */
+function ensure_share_token(array $row, array $user): string
+{
+    $ex = q('SELECT token FROM quote_shares WHERE quote_no = ?', [$row['quote_no']])->fetch();
+    $tok = $ex ? $ex['token'] : bin2hex(random_bytes(16));
+    if (!$ex) q('INSERT INTO quote_shares (quote_no,token,created_at) VALUES (?,?,?)', [$row['quote_no'], $tok, now()]);
+    return $tok;
+}
+
+/** All business data as an array (users without password hashes / secrets). Used by the download and the nightly backup. */
+function backup_data(): array
+{
+    $out = ['exported_at' => now(), 'schema_v' => get_setting('schema_v'), 'app' => 'infraura-quotation-builder'];
+    foreach (['settings', 'clients', 'rate_items', 'quotes', 'quote_templates', 'quote_shares', 'quote_events', 'projects', 'project_milestones', 'project_receipts', 'project_variations', 'project_log', 'invoice_history', 'credit_notes', 'audit_log'] as $t) {
+        try { $out[$t] = q("SELECT * FROM $t")->fetchAll(); } catch (Throwable $e) { $out[$t] = []; }
+    }
+    foreach ($out['settings'] as &$s) if (in_array($s['k'], ['smtp_pass', 'cron_key'], true)) $s['v'] = '';   // secrets are never written to backup files
+    $out['users'] = q('SELECT id,name,email,role,created_at FROM users')->fetchAll();
+    return $out;
+}
+
+/** Write a compressed backup file to api/data/backups and prune old ones. Returns [filename, bytes]. */
+function backup_to_disk(): array
+{
+    $dir = data_dir() . '/backups';
+    if (!is_dir($dir)) @mkdir($dir, 0750, true);
+    if (!is_file($dir . '/.htaccess')) @file_put_contents($dir . '/.htaccess', "Require all denied\n");
+    $name = 'backup-' . date('Ymd-His') . '-' . bin2hex(random_bytes(8)) . '.json.gz';   // unguessable even if the web server ignored .htaccess
+    $bytes = file_put_contents($dir . '/' . $name, gzencode(json_encode(backup_data(), JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR), 6));
+    if ($bytes === false) throw new RuntimeException('Could not write the backup file (is api/data writable?)');
+    $keep = max(1, (int)(get_setting('backup_keep') ?: 14));
+    $files = glob($dir . '/backup-*.json.gz') ?: []; sort($files);
+    foreach (array_slice($files, 0, max(0, count($files) - $keep)) as $old) @unlink($old);
+    return [$name, $bytes];
+}
+
+function backup_files(): array
+{
+    $files = glob(data_dir() . '/backups/backup-*.json.gz') ?: []; rsort($files);
+    return array_map(fn($f) => ['name' => basename($f), 'bytes' => filesize($f), 'at' => date('Y-m-d H:i:s', filemtime($f))], array_slice($files, 0, 30));
+}
+
+function revoke_grant(string $grantId): void
+{
+    q('UPDATE oauth_refresh SET revoked = 1 WHERE grant_id = ?', [$grantId]);
+    q('UPDATE api_tokens SET revoked = 1 WHERE grant_id = ?', [$grantId]);
 }

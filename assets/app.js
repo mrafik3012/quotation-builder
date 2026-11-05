@@ -58,7 +58,7 @@ function toast(msg, type = '') {
 function openModal(html, wide) {
   const o = document.createElement('div');
   o.className = 'overlay';
-  o.innerHTML = `<div class="modal ${wide ? 'wide' : ''}">${html}</div>`;
+  o.innerHTML = `<div class="modal ${wide ? 'wide' : ''}" role="dialog" aria-modal="true">${html}</div>`;
   document.body.appendChild(o);
   const close = () => o.remove();
   o.addEventListener('mousedown', e => { if (e.target === o) close(); });
@@ -73,6 +73,7 @@ async function api(path, method = 'GET', body) {
   let data = null;
   try { data = await res.json(); } catch (e) { /* non-JSON */ }
   if (res.status === 401 && path !== 'auth/login' && path !== 'auth/me') { S.user = null; showLogin(); throw new Error('Session expired'); }
+  if (res.status === 428 && S.user) { showMustChange(); throw new Error('Session expired'); }
   if (res.status === 503 && data && data.error === 'not_installed') throw new Error('Not installed yet — open install.php on your server first');
   if (!res.ok) throw new Error((data && data.error) || ('Request failed (' + res.status + ')'));
   return data;
@@ -85,37 +86,90 @@ function download(name, text, type = 'text/csv') {
 }
 
 /* ---------- auth / boot ---------- */
+/** Scrollable areas must be reachable by keyboard (WCAG 2.1.1): give them focus + a name. Runs whenever the page changes. */
+function a11yScrollables() {
+  $$('.scroll, [style*="overflow:auto"], [style*="overflow-x:auto"]').forEach(el => { if (!el.hasAttribute('tabindex')) { el.tabIndex = 0; el.setAttribute('role', 'region'); el.setAttribute('aria-label', el.getAttribute('aria-label') || 'Scrollable content'); } });
+}
 async function init() {
+  let tm; new MutationObserver(() => { clearTimeout(tm); tm = setTimeout(a11yScrollables, 60); }).observe(document.body, { childList: true, subtree: true });
   window.addEventListener('hashchange', onHash);
   window.addEventListener('beforeunload', e => { if (window.__dirty) { e.preventDefault(); e.returnValue = ''; } });
+  const rm = /^#\/reset\/([a-f0-9]{48})$/.exec(location.hash);
+  if (rm) return showReset(rm[1]);
   try {
     const me = await api('auth/me');
     if (!me.user) return showLogin();
     S.user = me.user;
+    if (me.must_change) return showMustChange();
     await loadBootstrap();
     route();
-    setInterval(() => { if (S.user) api('auth/me').catch(() => {}); }, 8 * 60 * 1000); // keep the session alive while a long quote is being edited
+    tick();
+    setInterval(() => { if (S.user) { api('auth/me').catch(() => {}); tick(); } }, 8 * 60 * 1000); // keep the session alive while a long quote is being edited
   } catch (e) {
     $('#app').innerHTML = `<div class="login"><img class="logo" src="assets/logo.png" alt="Infraura"><h1>Quotation Builder</h1><p class="muted">${esc(e.message)}</p></div>`;
   }
 }
+async function refreshClients() { const r = await api('clients&per=300&recent=1'); S.clients = r.rows.reverse(); }
 async function loadBootstrap() {
   const b = await api('bootstrap');
   S.user = b.user; S.settings = b.settings; S.clients = b.clients; S.rates = b.rates; S.templates = b.templates || [];
 }
-function showLogin() {
+function authShell(inner) {
   document.body.classList.remove('printmode');
-  $('#app').innerHTML = `<form class="login" id="lf"><img class="logo" src="assets/logo.png" alt="Infraura"><h1>Quotation Builder</h1><p class="muted" style="margin:0 0 16px">Sign in to continue</p>
-  <label class="f"><span>Email</span><input type="email" name="email" required autofocus autocomplete="username"></label>
+  $('#app').innerHTML = `<main class="login"><img class="logo" src="assets/logo.png" alt="Infraura"><h1>Quotation Builder</h1>${inner}</main>`;
+}
+function showLogin(prefill = {}) {
+  authShell(`<form id="lf"><p class="muted" style="margin:0 0 16px">Sign in to continue</p>
+  <label class="f"><span>Email</span><input type="email" name="email" required autofocus autocomplete="username" value="${esc(prefill.email || '')}"></label>
   <label class="f"><span>Password</span><input type="password" name="password" required autocomplete="current-password"></label>
-  <button class="btn pri" style="width:100%;justify-content:center">Sign in</button></form>`;
+  <label class="f" id="codebox" style="display:${prefill.need2fa ? 'block' : 'none'}"><span>6-digit code from your authenticator app (or a recovery code)</span><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="12"></label>
+  <button class="btn pri" style="width:100%;justify-content:center">Sign in</button>
+  <p class="small" style="text-align:center;margin:14px 0 0"><a href="#" id="forgot">Forgot password?</a></p></form>`);
+  $('#forgot').onclick = e => { e.preventDefault(); showForgot($('#lf').email.value); };
+  if (prefill.need2fa) $('#lf').code.focus();
   $('#lf').onsubmit = async e => {
     e.preventDefault();
     const f = e.target, btn = $('button', f); btn.disabled = true;
     try {
-      const r = await api('auth/login', 'POST', { email: f.email.value, password: f.password.value });
-      S.user = r.user; await loadBootstrap(); location.hash = '#/dashboard'; route();
+      const r = await api('auth/login', 'POST', { email: f.email.value, password: f.password.value, code: f.code.value });
+      if (r.need_2fa) { $('#codebox').style.display = 'block'; f.code.focus(); toast('Enter the code from your authenticator app', ''); btn.disabled = false; return; }
+      S.user = r.user;
+      if (r.must_change) return showMustChange();
+      await loadBootstrap(); location.hash = '#/dashboard'; route();
     } catch (err) { toast(err.message, 'err'); btn.disabled = false; }
+  };
+}
+function showForgot(email = '') {
+  authShell(`<form id="ff"><p class="muted" style="margin:0 0 16px">Enter your e-mail and we will send a link to choose a new password.</p>
+  <label class="f"><span>Email</span><input type="email" name="email" required autofocus value="${esc(email)}"></label>
+  <button class="btn pri" style="width:100%;justify-content:center">Send reset link</button><p class="small" style="text-align:center;margin:14px 0 0"><a href="#" id="back">Back to sign in</a></p></form>`);
+  $('#back').onclick = e => { e.preventDefault(); showLogin(); };
+  $('#ff').onsubmit = async e => {
+    e.preventDefault(); const f = e.target;
+    try { const r = await api('auth/forgot', 'POST', { email: f.email.value });
+      $('#ff').innerHTML = `<p>${r.mail_configured ? 'If that address belongs to an account, a reset link is on its way. It works for one hour.' : 'E-mail has not been set up for this site yet. Please ask your administrator to reset your password (Settings → Team).'}</p><p class="small"><a href="#" id="back2">Back to sign in</a></p>`;
+      $('#back2').onclick = ev => { ev.preventDefault(); showLogin(); };
+    } catch (err) { toast(err.message, 'err'); }
+  };
+}
+function showReset(token) {
+  authShell(`<form id="rf"><p class="muted" style="margin:0 0 16px">Choose a new password</p>
+  <label class="f"><span>New password (min 8 characters)</span><input type="password" name="pw" minlength="8" required autofocus autocomplete="new-password"></label>
+  <label class="f"><span>Repeat it</span><input type="password" name="pw2" minlength="8" required autocomplete="new-password"></label>
+  <button class="btn pri" style="width:100%;justify-content:center">Save new password</button></form>`);
+  $('#rf').onsubmit = async e => {
+    e.preventDefault(); const f = e.target; if (f.pw.value !== f.pw2.value) return toast('The two passwords do not match', 'err');
+    try { await api('auth/reset', 'POST', { token, password: f.pw.value }); toast('Password changed - please sign in', 'ok'); history.replaceState(null, '', location.pathname); showLogin(); } catch (err) { toast(err.message, 'err'); }
+  };
+}
+function showMustChange() {
+  authShell(`<form id="mc"><div class="banner" style="margin:0 0 14px">An administrator reset your password. Choose your own before continuing.</div>
+  <label class="f"><span>Temporary password</span><input type="password" name="cur" required autocomplete="current-password"></label>
+  <label class="f"><span>New password (min 8 characters)</span><input type="password" name="pw" minlength="8" required autocomplete="new-password"></label>
+  <button class="btn pri" style="width:100%;justify-content:center">Change password</button></form>`);
+  $('#mc').onsubmit = async e => {
+    e.preventDefault(); const f = e.target;
+    try { await api('auth/password', 'POST', { current: f.cur.value, new: f.pw.value }); toast('Password changed', 'ok'); await loadBootstrap(); location.hash = '#/dashboard'; route(); } catch (err) { toast(err.message, 'err'); }
   };
 }
 async function logout() { await guard(() => api('auth/logout', 'POST')); S.user = null; window.__dirty = false; showLogin(); }
@@ -139,7 +193,7 @@ async function route() {
   if (!S.user) return;
   lastHash = location.hash;
   const p = (location.hash.replace(/^#\/?/, '') || 'dashboard').split('/');
-  document.body.classList.toggle('printmode', (p[0] === 'quotes' && p[2] === 'print') || (p[0] === 'projects' && p[2] === 'invoice'));
+  document.body.classList.toggle('printmode', (p[0] === 'quotes' && p[2] === 'print') || (p[0] === 'projects' && ['invoice', 'receipt', 'credit'].includes(p[2])));
   if (!$('#view')) layout();
   $$('.side nav a').forEach(a => a.classList.toggle('on', a.dataset.n === p[0]));
   const v = $('#view'); v.onclick = v.oninput = v.onchange = null;
@@ -154,6 +208,8 @@ async function route() {
     } else if (p[0] === 'projects') {
       if (!p[1]) await pageProjects();
       else if (p[2] === 'invoice') await pageInvoice(+p[1], +p[3]);
+      else if (p[2] === 'receipt') await pageReceipt(+p[1], +p[3]);
+      else if (p[2] === 'credit') await pageCredit(+p[1], +p[3]);
       else await pageProject(+p[1]);
     } else if (p[0] === 'reports') await pageReports();
     else if (p[0] === 'clients') await pageClients();
@@ -165,9 +221,25 @@ async function route() {
   }
 }
 
+/* ---------- self-running jobs + setup checklist ---------- */
+function tick() { if (S.user) api('tick', 'POST', {}).catch(() => {}); }   // lets the server run backups/summaries/reminders without any cron setup
+async function setupCard() {
+  if (!S.user || S.user.role !== 'admin') return '';
+  let c; try { c = await api('setup'); } catch (e) { return ''; }
+  if (c.dismissed) return '';
+  const row = i => `<li class="${i.done ? 'ok' : ''}">${i.done ? '✓' : '○'} ${i.link ? `<a href="${i.link}">${esc(i.label)}</a>` : esc(i.label)}${!i.done && i.action ? ` <button class="btn sm" data-sact="${i.action}" type="button">Mark done</button>` : ''}</li>`;
+  return `<div class="card" id="setupcard"><div class="row" style="justify-content:space-between"><h3 style="margin:0">Finish setting up · ${c.left} left</h3><button class="btn sm" id="sdismiss" type="button">Hide</button></div><ul class="checklist">${c.items.map(row).join('')}</ul></div>`;
+}
+function wireSetupCard() {
+  const dis = $('#sdismiss');
+  if (dis) dis.onclick = async () => { await api('setup/dismiss', 'POST', {}); const c = $('#setupcard'); if (c) c.style.display = 'none'; };
+  $$('[data-sact]').forEach(b => { b.onclick = async () => { await api('setup/' + b.dataset.sact, 'POST', {}); route(); }; });
+}
+
 /* ---------- dashboard ---------- */
 async function pageDashboard() {
   const d = await api('dashboard');
+  const setup = await setupCard();
   const st = Object.fromEntries(d.by_status.map(x => [x.status, x]));
   const g = k => st[k] || { n: 0, value: 0 };
   const total = d.by_status.reduce((a, x) => a + x.n, 0);
@@ -179,6 +251,7 @@ async function pageDashboard() {
   const dv = Object.fromEntries(d.by_division.map(x => [x.division, x]));
   $('#view').innerHTML = `
   <div class="page-head"><h1>Dashboard</h1><a class="btn pri" href="#/quotes">All quotes</a></div>
+  ${setup}
   <div class="tiles">
    <div class="tile"><div class="l">Quotes</div><div class="v">${total}</div><div class="s">latest revisions</div></div>
    <div class="tile"><div class="l">Open pipeline</div><div class="v">${inr0(open)}</div><div class="s">${openN} draft / sent</div></div>
@@ -188,14 +261,16 @@ async function pageDashboard() {
   </div>
   <div class="divcards">${Object.entries(DIVS).map(([k, label]) => {
     const x = dv[k] || { n: 0, value: 0 };
-    return `<div class="divcard"><h4>${label}</h4><div class="v">${inr0(x.value)}</div><div class="muted small">${x.n} quote${x.n === 1 ? '' : 's'}</div>
+    return `<div class="divcard"><h2>${label}</h2><div class="v">${inr0(x.value)}</div><div class="muted small">${x.n} quote${x.n === 1 ? '' : 's'}</div>
     <div class="hbar"><i style="width:${Math.round(x.value * 100 / maxD)}%"></i></div>
     <a class="btn sm" style="margin-top:10px" href="#/quotes/new/${k}">+ New ${label} quote</a></div>`;
   }).join('')}</div>
-  <div class="grid2"><div class="card"><h3>Quote value — last 6 months</h3>${d.monthly.length ? `<div class="bars">${d.monthly.map(m => `<div class="b" title="${m.n} quotes"><span>${inr0(m.value).replace('₹ ', '')}</span><i style="height:${Math.max(3, Math.round(m.value * 90 / maxM))}%"></i><span>${esc(monthLabel(m.month))}</span></div>`).join('')}</div>` : '<p class="muted">No quotes yet.</p>'}</div>
-  <div class="card"><h3>By status</h3>${['draft', 'sent', 'accepted', 'rejected'].map(k => `<div class="row" style="margin-bottom:6px">${statusChip(k)}<span class="sp"></span><span class="muted small">${g(k).n} quotes</span><b>${inr0(g(k).value)}</b></div>`).join('')}</div></div>
-  ${d.follow_up && d.follow_up.length ? `<div class="card"><h3>Follow-ups due — sent 3+ days ago, no reply</h3>${d.follow_up.map(f => { const c = f.client || {}, days = Math.max(3, Math.floor((Date.now() - new Date(f.updated_at.replace(' ', 'T'))) / 864e5)); return `<div class="row" style="margin-bottom:8px"><div style="flex:1;min-width:200px"><a href="#/quotes/${f.id}"><b>${esc(f.quote_no)}</b></a> · ${esc(c.name || '')}<div class="muted small">${days} days ago · ${f.views ? 'viewed ' + f.views + '×' : 'not opened yet'}</div></div><b>${inr0(f.total)}</b><a class="btn sm" target="_blank" rel="noopener" href="${waLink(c.phone, `Hello ${c.contact_person || c.name || ''}, a gentle reminder about our quotation ${f.quote_no} (${inr0(f.total)}). Happy to clarify anything or revise it - ${S.settings.company_name}`)}">WhatsApp reminder</a></div>`; }).join('')}</div>` : ''}
-  <div class="card"><h3>Recent quotes</h3>${quoteTable(d.recent)}</div>`;
+  <div class="grid2"><div class="card"><h2>Quote value — last 6 months</h2>${d.monthly.length ? `<div class="bars">${d.monthly.map(m => `<div class="b" title="${m.n} quotes"><span>${inr0(m.value).replace('₹ ', '')}</span><i style="height:${Math.max(3, Math.round(m.value * 90 / maxM))}%"></i><span>${esc(monthLabel(m.month))}</span></div>`).join('')}</div>` : '<p class="muted">No quotes yet.</p>'}</div>
+  <div class="card"><h2>By status</h2>${['draft', 'sent', 'accepted', 'rejected'].map(k => `<div class="row" style="margin-bottom:6px">${statusChip(k)}<span class="sp"></span><span class="muted small">${g(k).n} quotes</span><b>${inr0(g(k).value)}</b></div>`).join('')}</div></div>
+  ${d.amc_due && d.amc_due.length ? `<div class="card"><h2>AMC / warranty renewals due</h2>${d.amc_due.map(a => { const days = Math.round((new Date(a.amc_end + 'T00:00:00') - new Date(today() + 'T00:00:00')) / 864e5); return `<div class="row" style="margin-bottom:8px"><div style="flex:1;min-width:200px"><a href="#/projects/${a.id}"><b>${esc(a.name)}</b></a> · ${esc(a.client_name || '')}<div class="muted small">${days >= 0 ? 'ends in ' + days + ' day(s)' : '<span class="bad">ended ' + (-days) + ' day(s) ago</span>'} (${esc(fdate(a.amc_end))})${a.amc_note ? ' · ' + esc(a.amc_note) : ''}</div></div><a class="btn sm" target="_blank" rel="noopener" href="${waLink(a.client_phone, `Hello ${a.client_name || ''}, the AMC / warranty for ${a.name} ${days >= 0 ? 'ends on ' + fdate(a.amc_end) : 'ended on ' + fdate(a.amc_end)}. Shall we renew or schedule a maintenance visit? - ${S.settings.company_name}`)}">WhatsApp renewal</a></div>`; }).join('')}</div>` : ''}
+  ${d.follow_up && d.follow_up.length ? `<div class="card"><h2>Follow-ups due — sent 3+ days ago, no reply</h2>${d.follow_up.map(f => { const c = f.client || {}, days = Math.max(3, Math.floor((Date.now() - new Date(f.updated_at.replace(' ', 'T'))) / 864e5)); return `<div class="row" style="margin-bottom:8px"><div style="flex:1;min-width:200px"><a href="#/quotes/${f.id}"><b>${esc(f.quote_no)}</b></a> · ${esc(c.name || '')}<div class="muted small">${days} days ago · ${f.views ? 'viewed ' + f.views + '×' : 'not opened yet'}</div></div><b>${inr0(f.total)}</b><a class="btn sm" target="_blank" rel="noopener" href="${waLink(c.phone, `Hello ${c.contact_person || c.name || ''}, a gentle reminder about our quotation ${f.quote_no} (${inr0(f.total)}). Happy to clarify anything or revise it - ${S.settings.company_name}`)}">WhatsApp reminder</a></div>`; }).join('')}</div>` : ''}
+  <div class="card"><h2>Recent quotes</h2>${quoteTable(d.recent)}</div>`;
+  wireSetupCard();
 }
 
 /* ---------- quotes list ---------- */
@@ -212,54 +287,71 @@ async function pageQuotes() {
   v.innerHTML = `<div class="page-head"><h1>Quotes</h1><span class="sp"></span>
   <button class="btn" id="qx">Export CSV</button>${Object.entries(DIVS).map(([k, l]) => `<a class="btn ${k === 'roofing' ? 'pri' : ''}" href="#/quotes/new/${k}">+ ${l}</a>`).join('')}</div>
   <div class="card"><div class="row" style="margin-bottom:12px">
-   <input id="qs" placeholder="Search quote no., client, project…" value="${esc(QF.q)}" style="max-width:300px">
-   <select id="qd" style="max-width:170px">${divOptions(QF.division, true)}</select>
-   <select id="qst" style="max-width:150px"><option value="">All statuses</option>${Object.entries(STATUS_LABEL).map(([k, l]) => `<option value="${k}" ${QF.status === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+   <input id="qs" aria-label="Search quotes" placeholder="Search quote no., client, project…" value="${esc(QF.q)}" style="max-width:300px">
+   <select id="qd" aria-label="Filter by division" style="max-width:170px">${divOptions(QF.division, true)}</select>
+   <select id="qst" aria-label="Filter by status" style="max-width:150px"><option value="">All statuses</option>${Object.entries(STATUS_LABEL).map(([k, l]) => `<option value="${k}" ${QF.status === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
    <label class="row small" style="gap:5px"><input type="checkbox" id="qa" ${QF.all ? 'checked' : ''}> Show all revisions</label>
    ${clientName ? `<span class="chip div">Client: ${esc(clientName)} <a href="#" id="cc">✕</a></span>` : ''}</div>
    <div id="ql"><p class="muted">Loading…</p></div></div>`;
-  const load = async () => {
-    const qs = new URLSearchParams();
+  const params = () => { const qs = new URLSearchParams();
     if (QF.q) qs.set('q', QF.q); if (QF.status) qs.set('status', QF.status);
-    if (QF.division) qs.set('division', QF.division); if (QF.all) qs.set('all', '1'); if (QF.client_id) qs.set('client_id', QF.client_id);
-    const rows = await api('quotes' + (qs.toString() ? '&' + qs : '')); QF.rows = rows;
-    $('#ql').innerHTML = quoteTable(rows) + (rows.length ? `<p class="muted small" style="margin:10px 0 0">${rows.length} quote${rows.length === 1 ? '' : 's'} · total ${inr0(rows.filter(r => r.status !== 'superseded').reduce((a, r) => a + r.total, 0))}</p>` : '');
+    if (QF.division) qs.set('division', QF.division); if (QF.all) qs.set('all', '1'); if (QF.client_id) qs.set('client_id', QF.client_id); return qs; };
+  let page = 1, shown = [], total = 0;
+  const paint = () => {
+    $('#ql').innerHTML = quoteTable(shown) + (shown.length ? `<p class="muted small" style="margin:10px 0 0">Showing ${shown.length} of ${total} quote${total === 1 ? '' : 's'} · total of those shown ${inr0(shown.filter(r => r.status !== 'superseded').reduce((a, r) => a + r.total, 0))}</p>${shown.length < total ? '<div class="row" style="margin-top:8px"><button class="btn" id="qmore" type="button">Load more</button></div>' : ''}` : '');
+    const mb = $('#qmore'); if (mb) mb.onclick = () => guard(async () => { page++; await load(true); });
+  };
+  const load = async (more) => {
+    if (!more) { page = 1; shown = []; }
+    const qs = params(); qs.set('per', '50'); qs.set('page', String(page));
+    const r = await api('quotes&' + qs); total = r.total; shown = shown.concat(r.rows); QF.rows = shown; paint();
   };
   let tm; const reload = () => { clearTimeout(tm); tm = setTimeout(() => guard(load), 200); };
   $('#qs').oninput = e => { QF.q = e.target.value; reload(); };
   $('#qd').onchange = e => { QF.division = e.target.value; reload(); };
   $('#qst').onchange = e => { QF.status = e.target.value; reload(); };
   $('#qa').onchange = e => { QF.all = e.target.checked; reload(); };
-  $('#qx').onclick = () => {
-    const rows = QF.rows || [], head = ['quote_no', 'rev', 'division', 'client', 'title', 'status', 'quote_date', 'valid_until', 'subtotal', 'discount', 'gst', 'total'];
+  $('#qx').onclick = () => guard(async () => {
+    let rows = [], pg = 1, tot = 1; const qs = params(); qs.set('per', '200');
+    while (rows.length < tot && pg <= 100) { qs.set('page', String(pg++)); const r = await api('quotes&' + qs); tot = r.total; rows = rows.concat(r.rows); if (!r.rows.length) break; }
+    const head = ['quote_no', 'rev', 'division', 'client', 'title', 'status', 'quote_date', 'valid_until', 'subtotal', 'discount', 'gst', 'total'];
     download('quotes.csv', [head.join(',')].concat(rows.map(r => [r.quote_no, r.rev, DIVS[r.division], (r.client || {}).name, r.title, r.status, r.quote_date, r.valid_until, r.subtotal, r.discount, r.tax, r.total].map(csvCell).join(','))).join('\n'));
-  };
+  });
   const cc = $('#cc'); if (cc) cc.onclick = e => { e.preventDefault(); QF.client_id = ''; pageQuotes(); };
   await load();
 }
 
 /* ---------- clients ---------- */
 async function pageClients() {
-  const rows = await api('clients'); S.clients = rows;
-  const v = $('#view');
+  const v = $('#view'), admin = S.user.role === 'admin';
   v.innerHTML = `<div class="page-head"><h1>Clients</h1><button class="btn pri" data-act="new">+ New client</button></div>
-  <div class="card"><input id="cs" placeholder="Search clients…" style="max-width:280px;margin-bottom:12px"><div class="scroll"><table class="tbl"><thead><tr><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>GSTIN</th><th class="r">Quotes</th><th></th></tr></thead><tbody id="cb"></tbody></table></div></div>`;
+  <div class="card"><input id="cs" aria-label="Search clients" placeholder="Search name, phone, e-mail, GSTIN…" style="max-width:320px;margin-bottom:12px"><div class="scroll"><table class="tbl"><thead><tr><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>GSTIN</th><th class="r">Quotes</th><th><span class="sr">Actions</span></th></tr></thead><tbody id="cb"></tbody></table></div><div id="cm" class="row" style="margin-top:10px"></div></div>`;
+  let rows = [], page = 1, total = 0, term = '';
   const draw = () => {
-    const f = $('#cs').value.toLowerCase();
-    $('#cb').innerHTML = rows.filter(c => !f || (c.name + c.phone + c.email + c.contact_person).toLowerCase().includes(f)).map(c => `<tr>
-    <td><b>${esc(c.name)}</b><div class="muted small">${esc(c.address)}</div></td><td>${esc(c.contact_person)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td><td>${esc(c.gstin)}</td>
-    <td class="r"><a href="#/quotes" data-act="q" data-id="${c.id}">${c.quote_count}</a></td>
-    <td class="nw r"><button class="btn sm" data-act="edit" data-id="${c.id}">Edit</button> <button class="btn sm dng" data-act="del" data-id="${c.id}">Delete</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No clients yet.</td></tr>';
+    $('#cb').innerHTML = rows.map(c => `<tr><td><b>${esc(c.name)}</b>${c.anonymized ? ' <span class="chip draft">data erased</span>' : ''}<div class="muted small">${esc(c.address)}</div></td><td>${esc(c.contact_person)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td><td>${esc(c.gstin)}</td>
+      <td class="r"><a href="#/quotes" data-act="q" data-id="${c.id}">${c.quote_count}</a></td>
+      <td class="nw r"><button class="btn sm" data-act="edit" data-id="${c.id}">Edit</button> ${admin ? `<button class="btn sm" data-act="export" data-id="${c.id}" title="Download everything held about this client">Export data</button> <button class="btn sm" data-act="erase" data-id="${c.id}" title="Erase personal details (privacy request)">Erase data</button> ` : ''}<button class="btn sm dng" data-act="del" data-id="${c.id}">Delete</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No clients found.</td></tr>';
+    $('#cm').innerHTML = `<span class="muted small">Showing ${rows.length} of ${total}</span>${rows.length < total ? '<button class="btn" id="cmore" type="button">Load more</button>' : ''}`;
+    const mb = $('#cmore'); if (mb) mb.onclick = () => guard(async () => { page++; await load(true); });
   };
-  draw(); $('#cs').oninput = draw;
+  const load = async more => {
+    if (!more) { page = 1; rows = []; }
+    const r = await api(`clients&per=50&page=${page}${term ? '&q=' + encodeURIComponent(term) : ''}`); total = r.total; rows = rows.concat(r.rows);
+    rows.forEach(c => { if (!S.clients.find(x => x.id === c.id)) S.clients.push(c); });
+    draw();
+  };
+  let tm; $('#cs').oninput = e => { term = e.target.value.trim(); clearTimeout(tm); tm = setTimeout(() => guard(load), 250); };
   v.onclick = e => {
     const t = e.target.closest('[data-act]'); if (!t) return;
     const c = rows.find(x => x.id == t.dataset.id);
     if (t.dataset.act === 'new') clientModal(null);
     if (t.dataset.act === 'edit') clientModal(c);
     if (t.dataset.act === 'q') { QF.client_id = c.id; QF.all = false; QF.q = QF.status = QF.division = ''; }
-    if (t.dataset.act === 'del' && confirmBox(`Delete client "${c.name}"?`)) guard(async () => { await api('clients/' + c.id, 'DELETE'); toast('Client deleted', 'ok'); pageClients(); });
+    if (t.dataset.act === 'export') window.location.href = `api/index.php?r=clients/${c.id}/export`;
+    if (t.dataset.act === 'erase' && confirmBox(`Erase personal details of "${c.name}"?\n\nPhone, e-mail and contact person are removed. If the client has accepted quotes or invoices, their name, address and GSTIN are kept because tax law requires it. This cannot be undone.`)) guard(async () => { const r = await api(`clients/${c.id}/anonymize`, 'POST', { confirm: true }); alert(r.note); load(); });
+    if (t.dataset.act === 'del' && confirmBox(`Delete client "${c.name}"?`)) guard(async () => { await api('clients/' + c.id, 'DELETE'); toast('Client deleted', 'ok'); load(); });
   };
+  await load();
 }
 function clientModal(c, onSaved) {
   c = c || {};
@@ -276,7 +368,7 @@ function clientModal(c, onSaved) {
     guard(async () => {
       let id = c.id;
       if (c.id) await api('clients/' + c.id, 'PUT', body); else id = (await api('clients', 'POST', body)).id;
-      S.clients = await api('clients'); m.close(); toast('Client saved', 'ok');
+      await refreshClients(); m.close(); toast('Client saved', 'ok');
       if (onSaved) onSaved(id); else pageClients();
     });
   };
@@ -303,9 +395,9 @@ async function pageRates() {
   const v = $('#view');
   v.innerHTML = `<div class="page-head"><h1>Rate Cards</h1><button class="btn" data-act="exp">Export CSV</button>${S.user.role === 'admin' ? '<button class="btn" data-act="imp">Import CSV</button><button class="btn pri" data-act="new">+ New item</button>' : ''}<input type="file" id="fi" accept=".csv,text/csv" hidden></div>
   <div class="card"><div class="tabs">${Object.entries(DIVS).map(([k, l]) => `<button data-act="tab" data-d="${k}" class="${k === RF.div ? 'on' : ''}">${l} <span class="muted small">${S.rates.filter(r => r.division === k).length}</span></button>`).join('')}</div>
-  <input id="rs" placeholder="Search items…" value="${esc(RF.q)}" style="max-width:280px;margin-bottom:12px">
+  <input id="rs" aria-label="Search rate card items" placeholder="Search items…" value="${esc(RF.q)}" style="max-width:280px;margin-bottom:12px">
   <p class="muted small" style="margin:0 0 10px">Rates shown are indicative starting values — edit them to your actual costs. Items you mark inactive stay saved but are hidden from the quote picker.</p>
-  <div class="scroll"><table class="tbl"><thead><tr><th>Category</th><th>Item</th><th>Unit</th><th class="r">Rate (₹)</th><th class="r">Cost (₹)</th><th class="r">Margin</th><th></th></tr></thead><tbody id="rb"></tbody></table></div></div>`;
+  <div class="scroll"><table class="tbl"><thead><tr><th>Category</th><th>Item</th><th>Unit</th><th class="r">Rate (₹)</th><th class="r">Cost (₹)</th><th class="r">Margin</th><th><span class="sr">Actions</span></th></tr></thead><tbody id="rb"></tbody></table></div></div>`;
   const draw = () => {
     const f = RF.q.toLowerCase();
     const rows = S.rates.filter(r => r.division === RF.div && (!f || (r.name + r.category).toLowerCase().includes(f)));
@@ -389,20 +481,20 @@ async function pageSettings() {
   const ta = (k, label, rows = 5) => `<label class="f"><span>${label}</span><textarea data-k="${k}" rows="${rows}" style="min-height:${rows * 22}px">${esc(s[k])}</textarea></label>`;
   $('#view').innerHTML = `<div class="page-head"><h1>Settings</h1>${admin ? '<button class="btn pri" data-act="save">Save settings</button>' : '<span class="muted">View only — admin can edit</span>'}</div>
   <fieldset ${admin ? '' : 'disabled'}>
-  <div class="card"><h3>Company (appears on every quotation)</h3><div class="grid2"><div>${inp('company_name', 'Company name')}${inp('company_tagline', 'Tagline')}${ta('company_address', 'Address', 3)}</div>
+  <div class="card"><h2>Company (appears on every quotation)</h2><div class="grid2"><div>${inp('company_name', 'Company name')}${inp('company_tagline', 'Tagline')}${ta('company_address', 'Address', 3)}</div>
   <div>${inp('company_phone', 'Phone')}${inp('company_email', 'Email', 'email')}${inp('company_gstin', 'GSTIN')}${inp('signatory', 'Authorised signatory name')}</div></div>
   <div class="row"><div id="lg">${s.company_logo ? `<img src="${esc(s.company_logo)}" style="max-height:60px;background:#f1f5f9;padding:4px;border-radius:6px">` : '<span class="muted small">No logo</span>'}</div>
   <label class="btn sm">Upload logo<input type="file" id="logo" accept="image/png,image/jpeg" hidden></label><button type="button" class="btn sm" data-act="rmlogo">Remove</button></div></div>
-  <div class="card"><h3>Quote defaults</h3><div class="grid3">${inp('quote_prefix', 'Quote number prefix')}${inp('validity_days', 'Validity (days)', 'number')}${inp('min_margin', 'Low-margin alert below (%)', 'number')}
+  <div class="card"><h2>Quote defaults</h2><div class="grid3">${inp('quote_prefix', 'Quote number prefix')}${inp('validity_days', 'Validity (days)', 'number')}${inp('min_margin', 'Low-margin alert below (%)', 'number')}
   ${Object.entries(DIVS).map(([k, l]) => inp('gst_' + k, 'GST % — ' + l, 'number')).join('')}${Object.entries(DIVS).map(([k, l]) => inp('hsn_' + k, 'HSN / SAC — ' + l)).join('')}</div></div>
-  <div class="card"><h3>Bank details (printed on quotations)</h3>${ta('bank_details', 'Bank details', 5)}</div>
-  <div class="card"><h3>Default terms &amp; conditions (one per line)</h3><div class="grid2">${Object.entries(DIVS).map(([k, l]) => ta('terms_' + k, l, 8)).join('')}</div></div>
-  <div class="card"><h3>Default payment schedule — one stage per line as "Stage name|percent"</h3><div class="grid2">${Object.entries(DIVS).map(([k, l]) => ta('pay_' + k, l, 5)).join('')}</div></div></fieldset>
-  ${admin ? `<div class="card"><h3>Backup &amp; activity log</h3><div class="row"><a class="btn" href="api/index.php?r=backup">Download full backup (JSON)</a><span class="muted small">Quotes, clients, rate cards, projects and settings. Keep a copy regularly - also enable automatic backups in Hostinger hPanel.</span></div><div id="audit" style="margin-top:12px"></div></div>` : ''}
+  <div class="card"><h2>Bank details (printed on quotations)</h2>${ta('bank_details', 'Bank details', 5)}</div>
+  <div class="card"><h2>Default terms &amp; conditions (one per line)</h2><div class="grid2">${Object.entries(DIVS).map(([k, l]) => ta('terms_' + k, l, 8)).join('')}</div></div>
+  <div class="card"><h2>Default payment schedule — one stage per line as "Stage name|percent"</h2><div class="grid2">${Object.entries(DIVS).map(([k, l]) => ta('pay_' + k, l, 5)).join('')}</div></div></fieldset>
+  ${admin ? `<div class="card"><h2>Backup &amp; activity log</h2><div class="row"><a class="btn" href="api/index.php?r=backup">Download full backup (JSON)</a><span class="muted small">Quotes, clients, rate cards, projects and settings. Keep a copy regularly - also enable automatic backups in Hostinger hPanel.</span></div><div id="audit" style="margin-top:12px"></div></div>` : ''}
   ${admin ? '<div class="card" id="aicard"><span class="muted small">Loading…</span></div>' : ''}
-  <div class="card"><h3>Quote templates</h3>${(S.templates || []).length ? `<table class="tbl"><tbody>${S.templates.map(t => `<tr><td><b>${esc(t.name)}</b></td><td>${divChip(t.division)}</td><td class="r">${admin ? `<button class="btn sm dng" data-act="deltpl" data-id="${t.id}">Delete</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted small" style="margin:0">No templates yet. Open any quote and click “Save as template”.</p>'}</div>
-  <div class="grid2"><div class="card"><h3>Change my password</h3><form id="pw"><label class="f"><span>Current password</span><input type="password" name="current" required></label><label class="f"><span>New password (min 8)</span><input type="password" name="new" minlength="8" required></label><button class="btn">Update password</button></form></div>
-  ${admin ? `<div class="card"><h3>Team</h3><div id="ul"></div><form id="uf" style="margin-top:12px"><div class="grid2"><label class="f"><span>Name</span><input name="name" required></label><label class="f"><span>Email</span><input name="email" type="email" required></label><label class="f"><span>Password</span><input name="password" type="password" minlength="8" required></label><label class="f"><span>Role</span><select name="role"><option value="staff">Staff</option><option value="admin">Admin</option></select></label></div><button class="btn">Add user</button></form></div>` : ''}</div>`;
+  <div class="card"><h2>Quote templates</h2>${(S.templates || []).length ? `<table class="tbl"><tbody>${S.templates.map(t => `<tr><td><b>${esc(t.name)}</b></td><td>${divChip(t.division)}</td><td class="r">${admin ? `<button class="btn sm dng" data-act="deltpl" data-id="${t.id}">Delete</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted small" style="margin:0">No templates yet. Open any quote and click “Save as template”.</p>'}</div>
+  <div class="card" id="seccard"></div>
+  ${admin ? '<div class="card" id="mailcard"></div><div class="card" id="syscard"></div><div class="card" id="teamcard"></div>' : ''}`;
   const v = $('#view');
   let logo = s.company_logo || '';
   const logoIn = $('#logo');
@@ -420,17 +512,11 @@ async function pageSettings() {
       $$('.side nav a').forEach(a => a.classList.toggle('on', a.dataset.n === 'settings'));
     });
     if (t.dataset.act === 'deltpl' && confirmBox('Delete this template?')) guard(async () => { await api('templates/' + t.dataset.id, 'DELETE'); S.templates = await api('templates'); pageSettings(); });
-    if (t.dataset.act === 'deluser' && confirmBox('Remove this user?')) guard(async () => { await api('users/' + t.dataset.id, 'DELETE'); loadUsers(); });
   };
-  $('#pw').onsubmit = e => { e.preventDefault(); const f = e.target; guard(async () => { await api('auth/password', 'POST', { current: f.current.value, new: f.new.value }); toast('Password updated', 'ok'); f.reset(); }); };
-  async function loadUsers() {
-    const us = await api('users');
-    $('#ul').innerHTML = `<table class="tbl"><tbody>${us.map(u => `<tr><td><b>${esc(u.name)}</b><div class="muted small">${esc(u.email)}</div></td><td>${esc(u.role)}</td><td class="r">${u.id === S.user.id ? '<span class="muted small">you</span>' : `<button class="btn sm dng" data-act="deluser" data-id="${u.id}">Remove</button>`}</td></tr>`).join('')}</tbody></table>`;
-  }
+  renderSecurity();
   if (admin) {
     api('audit').then(a => { $('#audit').innerHTML = a.length ? `<div class="small" style="max-height:220px;overflow:auto">${a.map(x => `<div class="row" style="margin-bottom:3px"><span class="muted nw">${esc(x.created_at.slice(0, 16))}</span><span class="nw">${esc(x.user_name)}</span><span><b>${esc(x.action)}</b> ${esc(x.detail)}</span></div>`).join('')}</div>` : '<span class="muted small">No activity recorded yet.</span>'; }).catch(() => {});
     renderAiCard().catch(() => { $('#aicard').innerHTML = '<span class="muted small">AI settings unavailable.</span>'; });
-    await loadUsers();
-    $('#uf').onsubmit = e => { e.preventDefault(); const f = e.target; guard(async () => { await api('users', 'POST', Object.fromEntries(new FormData(f))); toast('User added', 'ok'); f.reset(); loadUsers(); }); };
+    renderMailCard(); renderTeam(); renderSystemCard().catch(() => {});
   }
 }

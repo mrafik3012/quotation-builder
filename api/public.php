@@ -3,7 +3,11 @@ declare(strict_types=1);
 // Public (no login) endpoint used by view.html - a client opens their quotation via a private link,
 // can choose an option, and accept (with e-signature) or decline it.
 require __DIR__ . '/lib.php';
+require __DIR__ . '/core.php';
 require __DIR__ . '/migrate.php';
+require __DIR__ . '/projects.php';
+require __DIR__ . '/mail.php';
+require __DIR__ . '/jobs.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
 $act = (string)($_GET['r'] ?? '');
@@ -22,6 +26,8 @@ try {
     if (!$share) fail('This link is not valid or has been withdrawn', 404);
     $row = q('SELECT * FROM quotes WHERE quote_no = ? AND is_latest = 1', [$share['quote_no']])->fetch();
     if (!$row) fail('Quotation not found', 404);
+    // links stop working 60 days after the quote's validity ends (accepted quotes stay viewable for the client's records)
+    if ($row['status'] !== 'accepted' && $row['valid_until'] < date('Y-m-d', strtotime('-60 days'))) fail('This link has expired. Please ask us for a fresh quotation.', 410);
     // a draft (e.g. a revision being prepared) is never shown to the client
     $available = in_array($row['status'], ['sent', 'accepted', 'rejected'], true);
 
@@ -33,7 +39,11 @@ try {
         }
         // log at most one view per visitor IP per 30 minutes
         $recent = q("SELECT 1 FROM quote_events WHERE quote_no = ? AND type = 'view' AND ip = ? AND created_at >= ?", [$row['quote_no'], $ip, date('Y-m-d H:i:s', strtotime('-30 minutes'))])->fetch();
-        if (!$recent) q('INSERT INTO quote_events (quote_no,rev,type,detail,actor,ip,created_at) VALUES (?,?,?,?,?,?,?)', [$row['quote_no'], (int)$row['rev'], 'view', '{}', null, $ip, now()]);
+        if (!$recent) {
+            $first = !q("SELECT 1 FROM quote_events WHERE quote_no = ? AND rev = ? AND type = 'view'", [$row['quote_no'], (int)$row['rev']])->fetch();
+            q('INSERT INTO quote_events (quote_no,rev,type,detail,actor,ip,created_at) VALUES (?,?,?,?,?,?,?)', [$row['quote_no'], (int)$row['rev'], 'view', '{}', null, $ip, now()]);
+            if ($first && $row['status'] === 'sent') notify_quote_event($row, 'viewed', []);
+        }
         $data = json_decode((string)$row['data'], true) ?: [];
         unset($data['roofcalc'], $data['pmc'], $data['source']);
         $strip = function (array $secs): array {
@@ -81,12 +91,15 @@ try {
             if ($st->rowCount() !== 1) fail('This quotation has already been responded to.', 409);
             $detail['total'] = $total;
             q('INSERT INTO quote_events (quote_no,rev,type,detail,actor,ip,created_at) VALUES (?,?,?,?,?,?,?)', [$row['quote_no'], (int)$row['rev'], 'accepted', json_encode($detail, JSON_UNESCAPED_UNICODE), $name, $ip, now()]);
+            $row['total'] = $total; $row['status'] = 'accepted';
+            notify_quote_event($row, 'accepted', $detail);
             json_out(['ok' => true, 'status' => 'accepted']);
         }
         if (($d['action'] ?? '') === 'reject') {
             $st = q("UPDATE quotes SET status='rejected', updated_at=? WHERE id=? AND status='sent' AND is_latest=1", [now(), $row['id']]);
             if ($st->rowCount() !== 1) fail('This quotation has already been responded to.', 409);
             q('INSERT INTO quote_events (quote_no,rev,type,detail,actor,ip,created_at) VALUES (?,?,?,?,?,?,?)', [$row['quote_no'], (int)$row['rev'], 'rejected', json_encode($detail, JSON_UNESCAPED_UNICODE), $name ?: null, $ip, now()]);
+            notify_quote_event($row, 'declined', $detail);
             json_out(['ok' => true, 'status' => 'rejected']);
         }
         fail('Unknown action');
@@ -94,8 +107,46 @@ try {
     fail('Not found', 404);
 } catch (PDOException $e) {
     error_log('DB error: ' . $e->getMessage());
+    app_log_error('DB error: ' . $e->getMessage());
     fail('Database error', 500);
 } catch (Throwable $e) {
     error_log('Error: ' . $e->getMessage());
+    app_log_error('Error: ' . $e->getMessage());
     fail('Server error', 500);
+}
+
+/** After the response is sent: tell the team what the client did, confirm to the client, and start the project. */
+function notify_quote_event(array $row, string $what, array $detail): void
+{
+    after_response(function () use ($row, $what, $detail) {
+        $e = fn($s) => htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
+        $cl = json_decode((string)$row['client_json'], true) ?: [];
+        $who = $e($detail['name'] ?? '') ?: $e($cl['name'] ?? 'The client');
+        $link = app_base_url() . '/index.html#/quotes/' . (int)$row['id'];
+        $inr = 'Rs ' . number_format((float)$row['total'], 2);
+        $creator = !empty($row['created_by']) ? (q('SELECT email FROM users WHERE id = ?', [(int)$row['created_by']])->fetch()['email'] ?? null) : null;
+        if ($what === 'viewed') {
+            notify_admins('Opened: ' . $row['quote_no'] . ' - ' . ($cl['name'] ?? ''), 'Your quotation was opened', '<p><b>' . $e($cl['name'] ?? 'The client') . '</b> just opened quotation <b>' . $e($row['quote_no']) . '</b> (' . $inr . ') for the first time.</p>', ['Open quotation', $link], $creator);
+            return;
+        }
+        if ($what === 'declined') {
+            notify_admins('Declined: ' . $row['quote_no'] . ' - ' . ($cl['name'] ?? ''), 'Quotation declined', '<p>' . $who . ' declined quotation <b>' . $e($row['quote_no']) . '</b>.' . (!empty($detail['note']) ? '<br>Note: ' . $e($detail['note']) : '') . '</p>', ['Open quotation', $link], $creator);
+            return;
+        }
+        // accepted
+        $pid = null; $note = '';
+        if (get_setting('auto_project') !== '0' && (float)$row['total'] > 0 && !q('SELECT 1 FROM projects WHERE quote_no = ?', [$row['quote_no']])->fetch()) {
+            try {
+                $fresh = q('SELECT * FROM quotes WHERE id = ?', [$row['id']])->fetch();
+                $pid = create_project_from_quote($fresh);
+                q('INSERT INTO quote_events (quote_no,rev,type,detail,actor,ip,created_at) VALUES (?,?,?,?,?,?,?)', [$row['quote_no'], (int)$row['rev'], 'project_created', json_encode(['project_id' => $pid]), 'auto', null, now()]);
+                $note = '<br>A project with the payment schedule has been created automatically.';
+            } catch (Throwable $ex) { if (db()->inTransaction()) db()->rollBack(); app_log_error('Auto-project failed: ' . $ex->getMessage()); }
+        }
+        notify_admins('ACCEPTED: ' . $row['quote_no'] . ' - ' . ($cl['name'] ?? '') . ' - ' . $inr, 'Quotation accepted', '<p>' . $who . ' accepted quotation <b>' . $e($row['quote_no']) . '</b> for <b>' . $inr . '</b>.' . (!empty($detail['option']) ? '<br>Option: ' . $e($detail['option']) : '') . $note . '</p>', [$pid ? 'Open project' : 'Open quotation', $pid ? app_base_url() . '/index.html#/projects/' . $pid : $link], $creator);
+        if (get_setting('confirm_client') !== '0' && mail_configured() && filter_var($cl['email'] ?? '', FILTER_VALIDATE_EMAIL)) {
+            $co = (string)(get_setting('company_name') ?: 'Infraura');
+            send_mail($cl['email'], 'Thank you - quotation ' . $row['quote_no'] . ' accepted', email_html('Thank you', '<p>Dear ' . $who . ',</p><p>Thank you for accepting quotation <b>' . $e($row['quote_no']) . '</b> (' . $inr . '). Our team will contact you shortly to schedule the work.</p><p>' . $e($co) . '</p>'));
+        }
+    });
 }

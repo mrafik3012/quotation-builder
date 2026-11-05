@@ -9,12 +9,21 @@ DirectoryIndex index.html
     RedirectMatch 404 ^/(.*/)?(\.git|tests)(/|$)
 </IfModule>
 
+# Static files only: PHP responses set their own headers (the sign-in consent page needs a stricter X-Frame-Options: DENY)
 <IfModule mod_headers.c>
-    Header set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    <FilesMatch "\.(html|js|css|webmanifest|png|svg|ico)$">
+        Header set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        Header set X-Content-Type-Options "nosniff"
+        Header set X-Frame-Options "SAMEORIGIN"
+        Header set Referrer-Policy "same-origin"
+    </FilesMatch>
+</IfModule>
 
-    Header set X-Content-Type-Options "nosniff"
-    Header set X-Frame-Options "SAMEORIGIN"
-    Header set Referrer-Policy "same-origin"
+# OAuth discovery addresses that connector apps look for at the site root (works when the app is installed at the domain root)
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^\.well-known/oauth-authorization-server(/.*)?$ api/oauth.php?r=wk-authorization-server [L,QSA]
+    RewriteRule ^\.well-known/oauth-protected-resource(/.*)?$ api/oauth.php?r=wk-protected-resource [L,QSA]
 </IfModule>
 
 # Force HTTPS (Hostinger provides free SSL) - uncomment once SSL is active

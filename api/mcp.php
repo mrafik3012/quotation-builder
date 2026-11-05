@@ -40,12 +40,8 @@ function bearer_token(): string
     return trim((string)($_SERVER['HTTP_X_API_KEY'] ?? ''));
 }
 
-function app_base_url(): string
-{
-    $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
-    $dir = rtrim(dirname(dirname($_SERVER['SCRIPT_NAME'] ?? '/api/mcp.php')), '/\\');
-    return ($https ? 'https://' : 'http://') . ($_SERVER['HTTP_HOST'] ?? 'localhost') . $dir;
-}
+
+function oauth_on(): bool { return (get_setting('oauth_enabled') ?? '1') !== '0'; }
 
 /* ---------------- request handling ---------------- */
 $method = $_SERVER['REQUEST_METHOD'];
@@ -58,13 +54,13 @@ try {
     $ip = client_ip();
     $tok = bearer_token();
     if ($tok === '' || strlen($tok) > 200) {
-        header('WWW-Authenticate: Bearer realm="Infraura Quotation Builder MCP"');
+        header('WWW-Authenticate: Bearer realm="Infraura Quotation Builder MCP"' . (oauth_on() ? ', resource_metadata="' . app_base_url() . '/api/oauth.php?r=resource-metadata"' : ''));
         rpc_error(null, -32001, 'Authentication required. Send "Authorization: Bearer <token>" (create a token in Settings > AI assistants).', 401);
     }
     $tr = q('SELECT * FROM api_tokens WHERE token_hash = ? AND revoked = 0', [hash('sha256', $tok)])->fetch();
     if (!$tr || ($tr['expires_at'] && $tr['expires_at'] < now())) {
         rate_limit('mcpauth:' . $ip, 30, 600);   // throttle token guessing
-        header('WWW-Authenticate: Bearer realm="Infraura Quotation Builder MCP", error="invalid_token"');
+        header('WWW-Authenticate: Bearer realm="Infraura Quotation Builder MCP", error="invalid_token"' . (oauth_on() ? ', resource_metadata="' . app_base_url() . '/api/oauth.php?r=resource-metadata"' : ''));
         rpc_error(null, -32001, 'Invalid, expired or revoked token.', 401);
     }
     rate_limit('mcp:' . $tr['id'], 120, 60);
@@ -92,6 +88,7 @@ try {
     rpc_error(null, -32603, $e->getMessage(), $e->getCode() >= 400 && $e->getCode() < 600 ? $e->getCode() : 500);
 } catch (Throwable $e) {
     error_log('MCP error: ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+    app_log_error('MCP error: ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
     rpc_error(null, -32603, 'Internal server error', 500);
 }
 
@@ -116,7 +113,7 @@ function mcp_dispatch(array $m): ?array
                     'capabilities' => ['tools' => ['listChanged' => false], 'prompts' => ['listChanged' => false]],
                     'serverInfo' => ['name' => 'infraura-quotation-builder', 'title' => 'Infraura Quotation Builder', 'version' => MCP_VERSION],
                     'instructions' => "Quotation, rate-card and project data for Infraura (Sheet Roofing, Interior, Construction, PMC). All money is in INR. "
-                        . "Use search_rate_card to find real items and rates before drafting; use calculate_roof to price roofing. "
+                        . "For a roofing quote request use create_roofing_quote (A-type / A-frame / pitched = gable). State your assumptions (frame included? gutters?) back to the user, and ask for the client name if it was not given. Use search_rate_card to find real items and rates before drafting other work; use calculate_roof to compare roofing materials. "
                         . "Write tools only create or edit DRAFT quotes - a human reviews and sends them from the app. You cannot send, accept, delete or change settings.",
                 ]);
             case 'ping': return rpc_ok($id, new stdClass());
@@ -337,11 +334,11 @@ function mcp_tools(): array
         'inputSchema' => ['type' => 'object', 'properties' => [
             'roof_type' => ['type' => 'string', 'enum' => ['gable', 'shed', 'flat'], 'default' => 'gable'], 'length_ft' => ['type' => 'number', 'description' => 'Building length (along the ridge), feet'], 'width_ft' => ['type' => 'number', 'description' => 'Building width / span, feet'],
             'slope_degrees' => ['type' => 'number', 'default' => 10], 'eave_overhang_ft' => ['type' => 'number', 'default' => 1], 'gable_overhang_ft' => ['type' => 'number', 'default' => 0.5], 'eave_height_ft' => ['type' => 'number', 'default' => 12, 'description' => 'For downpipe length'],
-            'wastage_percent' => ['type' => 'number', 'default' => 7], 'skylight_percent' => ['type' => 'number', 'default' => 0], 'include_gutters' => ['type' => 'boolean', 'default' => true],
+            'wastage_percent' => ['type' => 'number', 'default' => 7], 'skylight_percent' => ['type' => 'number', 'default' => 0], 'include_gutters' => ['type' => 'boolean', 'default' => true], 'include_structure' => ['type' => 'boolean', 'default' => true, 'description' => 'false = sheeting/flashings only (re-roofing on an existing frame): leaves out the steel frame and purlins'],
             'materials' => ['type' => 'array', 'items' => ['type' => 'string', 'enum' => array_keys(ROOF_MATS)], 'description' => 'Defaults to gi, upvc, puf50, alu. ' . implode('; ', array_map(fn($k, $v) => "$k = {$v['label']}", array_keys(ROOF_MATS), ROOF_MATS))]], 'required' => ['length_ft', 'width_ft']],
         'annotations' => $ro, 'run' => function (array $a) {
             $in = ['type' => $a['roof_type'] ?? 'gable', 'len' => $a['length_ft'] ?? 0, 'wid' => $a['width_ft'] ?? 0, 'slope' => $a['slope_degrees'] ?? null, 'eave' => $a['eave_overhang_ft'] ?? null, 'gable' => $a['gable_overhang_ft'] ?? null,
-                'height' => $a['eave_height_ft'] ?? null, 'waste' => $a['wastage_percent'] ?? null, 'sky' => $a['skylight_percent'] ?? null, 'gutter' => array_key_exists('include_gutters', $a) && !$a['include_gutters'] ? 'no' : 'yes'];
+                'height' => $a['eave_height_ft'] ?? null, 'waste' => $a['wastage_percent'] ?? null, 'sky' => $a['skylight_percent'] ?? null, 'gutter' => array_key_exists('include_gutters', $a) && !$a['include_gutters'] ? 'no' : 'yes', 'structure' => array_key_exists('include_structure', $a) && !$a['include_structure'] ? 'no' : 'yes'];
             foreach (['len', 'wid'] as $k) if (!is_numeric($in[$k]) || (float)$in[$k] <= 0 || (float)$in[$k] > 5000) fail('length_ft and width_ft must be positive numbers (max 5000)');
             $mats = isset($a['materials']) && is_array($a['materials']) && $a['materials'] ? array_values(array_unique(array_map('strval', $a['materials']))) : ['gi', 'upvc', 'puf50', 'alu'];
             foreach ($mats as $m) if (!isset(ROOF_MATS[$m])) fail('Unknown material "' . $m . '". Valid: ' . implode(', ', array_keys(ROOF_MATS)));
@@ -354,17 +351,67 @@ function mcp_tools(): array
             $r['note'] = 'Quantities are estimates from roof geometry; rates come from the rate card. Pass a package\'s lines to create_quote_draft.';
             return $r;
         }];
+    $T['create_roofing_quote'] = ['scope' => 'write', 'title' => 'Create roofing quote (one step)', 'description' => 'ONE-STEP sheet-roofing quotation. Calculates the roof (sloped area, wastage, steel frame and purlins, flashings, gutters, fasteners, ventilators), prices every line from the rate card and saves a DRAFT quote. Use this when a user asks for a roofing quote with a size and a material, e.g. "GI sheet roofing for a 60 x 30 ft A-type shed". roof_type: "gable" = A-type / A-frame / double-slope / pitched roof (the common one, default); "shed" = mono-slope / lean-to; "flat". material: gi (GI colour-coated 0.40 mm, default), gi55, galv, upvc, upvcasa, puf30, puf50, puf75, alu, poly. Give SEVERAL materials to create one quote with selectable options the client can choose between. If the client is not known the draft is saved under "Client to be confirmed" - tell the user to set the client. The quote is a draft: a person reviews it in the app (app_url) and sends it.',
+        'inputSchema' => ['type' => 'object', 'properties' => [
+            'length_ft' => ['type' => 'number', 'description' => 'Building length along the ridge, feet'], 'width_ft' => ['type' => 'number', 'description' => 'Building width / span, feet'],
+            'material' => ['type' => 'string', 'enum' => array_keys(ROOF_MATS), 'default' => 'gi'], 'materials' => ['type' => 'array', 'items' => ['type' => 'string', 'enum' => array_keys(ROOF_MATS)], 'description' => 'Optional: 2-4 materials to offer as options (overrides material)'],
+            'roof_type' => ['type' => 'string', 'enum' => ['gable', 'shed', 'flat'], 'default' => 'gable'], 'slope_degrees' => ['type' => 'number', 'default' => 10], 'eave_overhang_ft' => ['type' => 'number', 'default' => 1], 'gable_overhang_ft' => ['type' => 'number', 'default' => 0.5],
+            'eave_height_ft' => ['type' => 'number', 'default' => 12], 'wastage_percent' => ['type' => 'number', 'default' => 7], 'skylight_percent' => ['type' => 'number', 'default' => 0], 'include_gutters' => ['type' => 'boolean', 'default' => true], 'include_structure' => ['type' => 'boolean', 'default' => true, 'description' => 'true (default) = new building: includes the MS steel frame/trusses and purlins. false = sheeting, flashings, gutters and fasteners only (re-roofing an existing frame). If the user did not say which, assume true and tell them.'],
+            'client_id' => ['type' => 'integer'], 'client' => $clientObj, 'title' => ['type' => 'string'], 'site_address' => ['type' => 'string'], 'notes' => ['type' => 'string'],
+            'discount_percent' => ['type' => 'number', 'minimum' => 0, 'maximum' => 100], 'gst_percent' => ['type' => 'number']], 'required' => ['length_ft', 'width_ft']],
+        'annotations' => $wr, 'run' => function (array $a) {
+            foreach (['length_ft', 'width_ft'] as $k) if (!isset($a[$k]) || !is_numeric($a[$k]) || (float)$a[$k] <= 0 || (float)$a[$k] > 5000) fail($k . ' must be a positive number of feet (max 5000)');
+            $mats = isset($a['materials']) && is_array($a['materials']) && $a['materials'] ? array_values(array_unique(array_map('strval', $a['materials']))) : [(string)($a['material'] ?? 'gi')];
+            if (count($mats) > 4) fail('Offer at most 4 materials in one quote');
+            foreach ($mats as $m) if (!isset(ROOF_MATS[$m])) fail('Unknown material "' . $m . '". Valid: ' . implode(', ', array_keys(ROOF_MATS)));
+            $type = (string)($a['roof_type'] ?? 'gable'); if (!in_array($type, ['gable', 'shed', 'flat'], true)) fail('roof_type must be gable (A-type), shed or flat');
+            $in = ['type' => $type, 'len' => $a['length_ft'], 'wid' => $a['width_ft'], 'slope' => $a['slope_degrees'] ?? null, 'eave' => $a['eave_overhang_ft'] ?? null, 'gable' => $a['gable_overhang_ft'] ?? null, 'height' => $a['eave_height_ft'] ?? null,
+                'waste' => $a['wastage_percent'] ?? null, 'sky' => $a['skylight_percent'] ?? null, 'gutter' => array_key_exists('include_gutters', $a) && !$a['include_gutters'] ? 'no' : 'yes', 'structure' => array_key_exists('include_structure', $a) && !$a['include_structure'] ? 'no' : 'yes'];
+            $calc = roof_calc($in, $mats, roof_rates_from_db());
+            if (!$calc) fail('Could not calculate this roof');
+            $warnings = [];
+            $assume = ['Roof type: ' . ['gable' => 'A-type / gable (two slopes)', 'shed' => 'mono-slope', 'flat' => 'flat'][$type] . ', slope ' . ($calc['inputs']['slope'] + 0) . ' degrees, eave overhang ' . ($calc['inputs']['eave'] + 0) . ' ft, ' . ($calc['inputs']['waste'] + 0) . '% wastage', $in['structure'] === 'yes' ? 'Includes the MS steel frame and purlins (new building). Re-quote with include_structure=false for sheeting only.' : 'Sheeting, flashings and fasteners only - NO steel frame or purlins (existing frame assumed).', $in['gutter'] === 'yes' ? 'Includes gutters and downpipes.' : 'Gutters and downpipes excluded.', 'Rates are from the current rate card; quantities are estimates to be confirmed on site.'];
+            // client: given id / given details / shared placeholder
+            if (!empty($a['client_id'])) { $cl = q('SELECT * FROM clients WHERE id = ?', [(int)$a['client_id']])->fetch(); if (!$cl) fail('client_id not found'); }
+            elseif (!empty($a['client']['name'] ?? '')) { $cl = null; }
+            else {
+                $cl = q('SELECT * FROM clients WHERE name = ?', ['Client to be confirmed'])->fetch();
+                if (!$cl) { q('INSERT INTO clients (name,contact_person,phone,email,address,gstin,created_at) VALUES (?,?,?,?,?,?,?)', ['Client to be confirmed', '', '', '', '', '', now()]); $cl = q('SELECT * FROM clients WHERE id = ?', [(int)db()->lastInsertId()])->fetch(); }
+                $warnings[] = 'No client was given, so the draft is under "Client to be confirmed". Open it in the app and choose the client before sending.';
+            }
+            $clientArr = $cl ? ['name' => $cl['name'], 'contact_person' => $cl['contact_person'], 'phone' => $cl['phone'], 'email' => $cl['email'], 'address' => $cl['address'], 'gstin' => $cl['gstin']] : (is_array($a['client'] ?? null) ? $a['client'] : []);
+            $g = $calc['geometry']; $L = money((float)$a['length_ft']); $W = money((float)$a['width_ft']);
+            $typeTxt = ['gable' => 'A-type (gable)', 'shed' => 'mono-slope', 'flat' => 'flat'][$type];
+            $toItems = fn(array $pkg) => array_map(fn($l) => ['desc' => $l['desc'], 'unit' => $l['unit'], 'qty' => $l['qty'], 'rate' => $l['rate'], 'cost' => $l['cost']], $pkg['lines']);
+            $data = build_quote_input(['gst_percent' => $a['gst_percent'] ?? null, 'discount_percent' => $a['discount_percent'] ?? null, 'notes' => $a['notes'] ?? '', 'site_address' => $a['site_address'] ?? ''], 'roofing');
+            $data['area_sqft'] = round($g['plan']);
+            $data['scope'] = 'Supply and installation of ' . (count($mats) > 1 ? 'roof sheeting (options below)' : ROOF_MATS[$mats[0]]['label'] . ' roof sheeting') . " for a {$L} x {$W} ft {$typeTxt} building (roof area approx. " . roof_in_words($g['area']) . ' sq ft including slope), with ' . ($in['structure'] === 'yes' ? 'supporting steel structure, ' : '') . 'flashings' . (($in['gutter'] === 'yes') ? ', gutters and downpipes' : '') . ' and fasteners.';
+            if (count($mats) === 1) $data['sections'] = [['title' => 'Roofing - ' . ROOF_MATS[$mats[0]]['label'], 'items' => $toItems($calc['packages'][0]), 'images' => []]];
+            else { $data['sections'] = []; $data['options'] = array_map(fn($p) => ['name' => ROOF_MATS[$p['material']]['short'], 'note' => $p['label'], 'sections' => [['title' => 'Roofing - ' . $p['label'], 'items' => $toItems($p), 'images' => []]]], $calc['packages']); $data['selected_option'] = 0; }
+            $title = a_str($a, 'title') ?: ('Roofing - ' . $L . ' x ' . $W . ' ft ' . $typeTxt . ' - ' . implode(' / ', array_map(fn($p) => $p['label'], $calc['packages'])));
+            $r = create_quote($GLOBALS['MCP_USER'], ['division' => 'roofing', 'client_id' => $cl ? (int)$cl['id'] : null, 'client' => $clientArr, 'title' => mb_substr($title, 0, 250), 'data' => $data]);
+            $out = ['quote_id' => $r['id'], 'quote_no' => $r['quote_no'], 'status' => 'draft', 'client' => $clientArr['name'] ?? '', 'roof' => ['type' => $typeTxt, 'plan_area_sqft' => round($g['plan']), 'roof_area_sqft' => round($g['area']), 'billed_area_sqft_with_wastage' => round($g['billed'])],
+                'assumptions' => $assume, 'warnings' => $warnings, 'app_url' => app_base_url() . '/index.html#/quotes/' . $r['id'], 'next_step' => 'A person should review this draft in the app (set the client if needed) and share it with the client from there.'];
+            if (count($calc['packages']) === 1) { $out['material'] = $calc['packages'][0]['label']; $out['totals'] = ['subtotal' => $r['subtotal'], 'discount' => $r['discount'], 'gst' => $r['tax'], 'grand_total' => $r['total']]; }
+            else {
+                $out['options'] = []; $row = q('SELECT data FROM quotes WHERE id = ?', [$r['id']])->fetch(); $d2 = json_decode((string)$row['data'], true);
+                foreach ($d2['options'] as $oi => $o) { $tmp = $d2; $tmp['selected_option'] = $oi; $out['options'][] = ['option' => $o['name'], 'material' => $o['note'], 'grand_total_incl_gst' => compute_totals($tmp)[4]]; }
+                $out['selected_option'] = $d2['options'][0]['name'] . ' (the client chooses on the quote page)'; $out['totals'] = ['grand_total_for_selected_option' => $r['total']];
+            }
+            return $out;
+        }];
     $T['list_projects'] = ['scope' => 'read', 'title' => 'List projects', 'description' => 'Projects created from accepted quotes with contract value, amount received, outstanding and overdue milestones.',
         'inputSchema' => ['type' => 'object', 'properties' => ['status' => ['type' => 'string', 'enum' => ['active', 'on_hold', 'completed']]]], 'annotations' => $ro, 'run' => function (array $a) {
             $rows = q("SELECT p.id,p.quote_no,p.name,p.division,p.status,p.base_value,p.tax_rate,(SELECT c.name FROM clients c WHERE c.id = p.client_id) AS client_name,
                 (SELECT COALESCE(SUM(v.amount),0) FROM project_variations v WHERE v.project_id = p.id AND v.status = 'approved') AS varsum,
+                (SELECT COALESCE(SUM(cn.amount),0) FROM credit_notes cn WHERE cn.project_id = p.id) AS credits,
                 (SELECT COALESCE(SUM(r.amount),0) FROM project_receipts r WHERE r.project_id = p.id) AS rec FROM projects p" . (!empty($a['status']) ? ' WHERE p.status = ?' : '') . ' ORDER BY p.id DESC LIMIT 100', !empty($a['status']) ? [(string)$a['status']] : [])->fetchAll();
-            return array_map(function ($r) { $c = project_total($r, (float)$r['varsum']); return ['project_id' => (int)$r['id'], 'name' => $r['name'], 'quote_no' => $r['quote_no'], 'client' => $r['client_name'], 'division' => $r['division'], 'status' => $r['status'], 'contract_value' => $c, 'received' => (float)$r['rec'], 'outstanding' => money($c - (float)$r['rec'])]; }, $rows);
+            return array_map(function ($r) { $c = project_total($r, (float)$r['varsum'], (float)$r['credits']); return ['project_id' => (int)$r['id'], 'name' => $r['name'], 'quote_no' => $r['quote_no'], 'client' => $r['client_name'], 'division' => $r['division'], 'status' => $r['status'], 'contract_value' => $c, 'received' => (float)$r['rec'], 'outstanding' => money($c - (float)$r['rec'])]; }, $rows);
         }];
     $T['get_project'] = ['scope' => 'read', 'title' => 'Get project', 'description' => 'One project with billing milestones (due dates, paid / overdue), payments received, variation orders and the latest site-log entries.',
         'inputSchema' => ['type' => 'object', 'properties' => ['project_id' => ['type' => 'integer']], 'required' => ['project_id']], 'annotations' => $ro, 'run' => function (array $a) {
             $d = project_detail((int)($a['project_id'] ?? 0));
-            return ['project' => $d['project'], 'totals' => $d['totals'], 'milestones' => array_map(fn($m) => ['milestone_id' => $m['id'], 'stage' => $m['label'], 'amount' => $m['amount'], 'paid' => $m['paid'], 'state' => $m['state'], 'due_date' => $m['due_date'], 'overdue' => $m['overdue'], 'invoice_no' => $m['invoice_no']], $d['milestones']),
+            return ['project' => array_diff_key($d['project'], ['client_id' => 1]), 'amc_warranty_ends' => $d['project']['amc_end'] ?? null, 'totals' => $d['totals'], 'milestones' => array_map(fn($m) => ['milestone_id' => $m['id'], 'stage' => $m['label'], 'amount' => $m['amount'], 'credited' => $m['credited'], 'paid' => $m['paid'], 'state' => $m['state'], 'due_date' => $m['due_date'], 'overdue' => $m['overdue'], 'invoice_no' => $m['invoice_no']], $d['milestones']),
                 'payments' => array_map(fn($r) => ['date' => $r['received_on'], 'amount' => $r['amount'], 'mode' => $r['mode'], 'reference' => $r['reference']], $d['receipts']), 'variations' => array_map(fn($v) => ['title' => $v['title'], 'amount_ex_gst' => $v['amount'], 'status' => $v['status']], $d['variations']),
                 'site_log' => array_slice(array_map(fn($l) => ['date' => $l['log_date'], 'text' => $l['text'], 'progress_percent' => $l['progress']], $d['log']), 0, 15), 'app_url' => app_base_url() . '/index.html#/projects/' . (int)$a['project_id']];
         }];

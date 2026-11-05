@@ -1,5 +1,5 @@
 # Block direct web access to internal PHP files and data. index.php stays public.
-<FilesMatch "^(config|lib|setup|migrate|projects|core|seed_extended)\.php$">
+<FilesMatch "^(config|lib|setup|migrate|projects|core|mail|auth|seed_extended)\.php$">
     Require all denied
 </FilesMatch>
 
@@ -8,6 +8,7 @@
     RewriteEngine On
     RewriteCond %{HTTP:Authorization} ^(.+)$
     RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+    RewriteRule ^\.well-known/(openid-configuration|oauth-authorization-server)$ oauth.php?r=as-metadata [L]
 </IfModule>
 <IfModule mod_setenvif.c>
     SetEnvIfNoCase Authorization "(.+)" HTTP_AUTHORIZATION=$1
