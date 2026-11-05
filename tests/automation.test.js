@@ -190,6 +190,58 @@ const pub = (tok, r, body) => fetch(`${BASE}/api/public.php?r=${r}&t=${tok}`, { 
     ok(mails().some(m => m.to.includes('imail@example.com')), 'mailed'); eq((await admin.api('GET', `quotes/${r.data.quote_id}`)).data.quote.status, 'sent');
   });
 
+  console.log('\nBulk price change, price factors, revision compare, client-approved change orders');
+  await test('bulk price change: dry run counts, apply scales rates (and cost if asked), bounds enforced, admin only', async () => {
+    const before = (await admin.api('GET', 'rates')).data.filter(r => r.division === 'pmc'); const it = before[0];
+    const dry = await admin.api('POST', 'rates/bulk-adjust', { division: 'pmc', percent: 10, dry_run: true }); eq(dry.status, 200); ok(dry.data.would_change >= before.filter(r => r.active).length - 0, 'counts active items');
+    eq((await admin.api('GET', 'rates')).data.filter(r => r.division === 'pmc')[0].rate, it.rate, 'dry run changes nothing');
+    eq((await admin.api('POST', 'rates/bulk-adjust', { division: 'pmc', percent: 10, include_cost: true })).status, 200);
+    const after = (await admin.api('GET', 'rates')).data.filter(r => r.division === 'pmc').find(r => r.id === it.id); eq(after.rate, Math.round(it.rate * 1.1 * 100) / 100, 'rate +10%'); eq(after.cost, Math.round(it.cost * 1.1 * 100) / 100, 'cost +10%');
+    const other = (await admin.api('GET', 'rates')).data.filter(r => r.division === 'interior')[0]; eq(other.rate, (await admin.api('GET', 'rates')).data.filter(r => r.division === 'interior')[0].rate, 'other divisions untouched');
+    await admin.api('POST', 'rates/bulk-adjust', { division: 'pmc', percent: -9.0909, include_cost: true });   // put it back (approximately)
+    eq((await admin.api('POST', 'rates/bulk-adjust', { percent: 500 })).status, 400); eq((await admin.api('POST', 'rates/bulk-adjust', { percent: 0 })).status, 400);
+    const email = `bulk-staff-${Date.now()}@example.com`; await admin.api('POST', 'users', { name: 'S', email, password: 'staffpass1', role: 'staff' }); const st = new Client(BASE); await st.api('POST', 'auth/login', { email, password: 'staffpass1' });
+    eq((await st.api('POST', 'rates/bulk-adjust', { percent: 5 })).status, 403);
+  });
+  await test('price factor: +12% raises every quick-quote rate, is noted on the quote, works for roofing too; bad values rejected', async () => {
+    const base = await qq('interior', { bhk: 2 }), up = await qq('interior', { bhk: 2, price_factor: 12, price_factor_label: 'Metro' });
+    const ratio = up.data.totals.grand_total / base.data.totals.grand_total; ok(ratio > 1.11 && ratio < 1.13, 'ratio ' + ratio);
+    ok(/\+12% from the standard rate card \(Metro\)/.test((await admin.api('GET', `quotes/${up.data.quote_id}`)).data.quote.data.notes), 'note on quote');
+    const r0 = await admin.api('POST', 'quotes/quick-roofing', { length_ft: 60, width_ft: 30, materials: ['gi'], client: { name: 'F0' } }), r1 = await admin.api('POST', 'quotes/quick-roofing', { length_ft: 60, width_ft: 30, materials: ['gi'], price_factor: -8, client: { name: 'F1' } });
+    const rr = r1.data.totals.grand_total / r0.data.totals.grand_total; ok(rr > 0.91 && rr < 0.93, 'roofing -8%: ' + rr);
+    eq((await qq('interior', { bhk: 2, price_factor: 500 })).status, 400); eq((await qq('interior', { bhk: 2, price_factor: 'x' })).status, 400);
+    eq((await admin.api('PUT', 'settings', { price_factors: 'Bad line' })).status, 400); eq((await admin.api('PUT', 'settings', { price_factors: 'Metro|12\nTown|-8' })).status, 200);
+    ok(/Metro\|12/.test((await admin.api('GET', 'settings')).data.price_factors), 'saved');
+  });
+  await test('revision compare: shows added, removed and changed lines and the total change', async () => {
+    const r = await admin.api('POST', 'quotes', { division: 'roofing', client: { name: 'Compare Co' }, title: 'Cmp', data: { sections: [{ title: 'S', items: [{ desc: 'Sheets', unit: 'sq ft', qty: 100, rate: 100 }, { desc: 'Old item', unit: 'nos', qty: 1, rate: 500 }] }], tax_rate: 18, payment_schedule: [{ label: 'All', percent: 100 }] } });
+    const id1 = r.data.id; const rev = await admin.api('POST', `quotes/${id1}/revise`); eq(rev.status, 201); const id2 = rev.data.id;
+    const cur = (await admin.api('GET', `quotes/${id2}`)).data.quote; cur.data.sections[0].items = [{ desc: 'Sheets', unit: 'sq ft', qty: 120, rate: 100 }, { desc: 'New item', unit: 'nos', qty: 2, rate: 250 }];
+    eq((await admin.api('PUT', `quotes/${id2}`, { ...cur, client: cur.client, data: cur.data, updated_at: cur.updated_at })).status, 200);
+    const d = (await admin.call('GET', `api/index.php?r=quotes/${id2}/compare&with=${id1}`)).data;
+    eq([d.old.rev, d.new.rev], [0, 1]); eq(d.changed.length, 1); eq(d.changed[0].old_qty, 100); eq(d.changed[0].new_qty, 120); eq(d.added.map(x => x.desc), ['New item']); eq(d.removed.map(x => x.desc), ['Old item']);
+    ok(d.total_change > 0, 'total went up'); eq((await admin.call('GET', `api/index.php?r=quotes/${id1}/compare&with=${id2}`)).data.new.rev, 1, 'order does not matter');
+    const other = await mkQuote('Other', 'o@example.com'); eq((await admin.call('GET', `api/index.php?r=quotes/${id2}/compare&with=${other.id}`)).status, 404);
+  });
+  await test('client-approved change order: send link -> client approves online -> milestone added, evidence stored, admin notified; cannot be answered twice', async () => {
+    const q = await mkQuote('Variation Co', 'varco@example.com'), s = await share(q); await pub(s.t, 'respond', { action: 'accept', name: 'VC', expected_total: s.total });
+    const pid = (await admin.api('GET', 'projects')).data.projects.find(p => p.quote_no === q.quote_no).id;
+    const v = (await admin.api('POST', `projects/${pid}/variations`, { title: 'Extra ridge vent', note: 'Client asked on site', amount: 10000 })).data.id;
+    smtp.messages.length = 0; const rq = await admin.api('POST', `projects/${pid}/variations/${v}/request-approval`, {}); eq(rq.status, 200); ok(/approve\.html\?t=[a-f0-9]{32}$/.test(rq.data.link), rq.data.link); eq(rq.data.emailed, true);
+    ok(mails().some(m => m.to.includes('varco@example.com') && /Change order/.test(m.subject)), 'client e-mailed');
+    const tok = rq.data.link.split('t=')[1]; const view = await pub(tok, 'variation'); eq(view.status, 200); eq(view.data.variation.total, 11800); eq(view.data.variation.status, 'proposed'); ok(!('approval_token' in view.data.variation), 'token not echoed');
+    eq((await pub(tok, 'variation-respond', { action: 'accept', name: '', expected_total: 11800 })).status, 400, 'name required');
+    eq((await pub(tok, 'variation-respond', { action: 'accept', name: 'Buyer', expected_total: 1 })).status, 409, 'amount must match what was shown');
+    smtp.messages.length = 0; eq((await pub(tok, 'variation-respond', { action: 'accept', name: 'Buyer', note: 'ok', expected_total: 11800 })).data.status, 'approved');
+    const det = (await admin.api('GET', `projects/${pid}`)).data; const vr = det.variations.find(x => x.id === v); eq(vr.status, 'approved'); eq(vr.decided_by, 'Buyer'); ok(vr.milestone_id, 'milestone linked'); ok(det.milestones.some(m => m.kind === 'variation' && m.amount === 11800), 'variation milestone');
+    ok(mails().some(m => /Change order APPROVED/.test(m.subject)), 'admin notified');
+    eq((await pub(tok, 'variation-respond', { action: 'decline', name: 'Buyer', expected_total: 11800 })).status, 409, 'already answered');
+    const v2 = (await admin.api('POST', `projects/${pid}/variations`, { title: 'Declined extra', amount: 5000 })).data.id; const t2 = (await admin.api('POST', `projects/${pid}/variations/${v2}/request-approval`, {})).data.link.split('t=')[1];
+    eq((await pub(t2, 'variation-respond', { action: 'decline', name: 'Buyer', expected_total: 5900 })).data.status, 'rejected'); eq((await admin.api('GET', `projects/${pid}`)).data.variations.find(x => x.id === v2).status, 'rejected');
+    eq((await pub('0'.repeat(32), 'variation')).status, 404); eq((await admin.api('POST', `projects/${pid}/variations/${v}/request-approval`, {})).status, 409, 'only proposed variations can be sent');
+    const v3 = (await admin.api('POST', `projects/${pid}/variations`, { title: 'Zero', amount: 0 })).data.id; eq((await admin.api('POST', `projects/${pid}/variations/${v3}/request-approval`, {})).status, 400);
+  });
+
   console.log('\nInstaller');
   const fs = require('fs'), os = require('os'), { spawn } = require('child_process');
   const fresh = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'qbinst-')); fs.cpSync(APP_DIR, d, { recursive: true, filter: s => !/config\.php$|\.sqlite$|[\\/]backups/.test(s) && !/[\\/]data[\\/]/.test(s) }); try { fs.rmSync(path.join(d, 'api', 'config.php'), { force: true }); } catch (e) {} return d; };

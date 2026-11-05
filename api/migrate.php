@@ -3,7 +3,7 @@ declare(strict_types=1);
 // Lightweight forward-only migrations. Runs automatically (once per version) on the first signed-in request,
 // so already-installed sites upgrade just by uploading the new files.
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 function ensure_schema(): void
 {
@@ -96,6 +96,14 @@ function ensure_schema(): void
         foreach (['auto_jobs' => '1', 'auto_jobs_at' => '0', 'notify_events' => '1', 'confirm_client' => '1', 'auto_project' => '1', 'overdue_reminders' => '0', 'setup_dismissed' => '0', 'rates_reviewed' => '0'] as $k => $v) {
             if (get_setting($k) === null) set_setting($k, $v);
         }
+    }
+    if ($cur < 9) {
+        // client-approved change orders + price factors for quick quotes
+        foreach (['approval_token VARCHAR(32) NULL', 'decided_by VARCHAR(120) NULL', 'decided_at VARCHAR(19) NULL', 'decided_ip VARCHAR(45) NULL', 'client_note VARCHAR(500) NULL'] as $def) {
+            if (!column_exists('project_variations', explode(' ', $def)[0])) ddl('ALTER TABLE project_variations ADD COLUMN ' . $def);
+        }
+        ddl('CREATE INDEX idx_pv_token ON project_variations (approval_token)');
+        if (get_setting('price_factors') === null) set_setting('price_factors', "Metro (Mumbai / Delhi / Bengaluru / Hyderabad / Chennai)|12\nTier-2 city|0\nSmaller town|-8");
     }
     set_setting('schema_v', (string)SCHEMA_VERSION);
 }

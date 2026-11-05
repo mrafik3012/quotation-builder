@@ -172,6 +172,9 @@ function route(string $m, string $a, ?string $b, ?string $c): void
                     if ($k === 'backup_keep' && (!ctype_digit($v) || (int)$v < 1 || (int)$v > 90)) fail('Keep between 1 and 90 backups');
                     if ($k === 'validity_days' && (!ctype_digit($v) || (int)$v < 1 || (int)$v > 365)) fail('Validity must be a whole number of days between 1 and 365');
                     if (($k === 'min_margin' || strpos($k, 'gst_') === 0) && (!is_numeric($v) || (float)$v < 0 || (float)$v > 100)) fail('Percentages must be numbers between 0 and 100');
+                    if ($k === 'price_factors') {
+                        foreach (preg_split('/\R/', $v) as $line) { if (trim($line) === '') continue; $parts = explode('|', $line, 2); if (count($parts) !== 2 || trim($parts[0]) === '' || !is_numeric(trim($parts[1])) || (float)$parts[1] < -50 || (float)$parts[1] > 100) fail('Price factors: one per line as  Name|percent  (percent between -50 and 100)'); }
+                    }
                     if ($k === 'quote_prefix' && !preg_match('/^[A-Za-z0-9-]{1,10}$/', $v)) fail('Quote prefix: 1-10 letters, digits or hyphens');
                     if (in_array($k, ['company_email'], true) && $v !== '' && !filter_var($v, FILTER_VALIDATE_EMAIL)) fail('Enter a valid company email');
                     if ($k === 'company_logo' && strlen($v) > 600000) fail('Logo too large (max ~400 KB)');
@@ -400,6 +403,21 @@ function rates_route(string $m, ?string $b): void
 {
     if ($m !== 'GET') require_admin();
     if ($m === 'GET') json_out(rates_list(isset($_GET['division']) ? (string)$_GET['division'] : null));
+    if ($m === 'POST' && $b === 'bulk-adjust') {   // raise / lower prices by a percentage (optionally one division / category); dry_run just counts
+        $d = body(); $pct = $d['percent'] ?? null;
+        if (!is_numeric($pct) || (float)$pct < -50 || (float)$pct > 100 || abs((float)$pct) < 0.01) fail('Percent must be between -50 and 100 (and not zero)');
+        $f = 1 + (float)$pct / 100; $where = ['1=1']; $p = [];
+        if (!empty($d['division'])) { if (!isset(DIVISIONS[$d['division']])) fail('Unknown division'); $where[] = 'division = ?'; $p[] = $d['division']; }
+        if (!empty($d['category'])) { $where[] = 'category = ?'; $p[] = str($d['category'], 120); }
+        if (empty($d['include_inactive'])) $where[] = 'active = 1';
+        $both = !empty($d['include_cost']);
+        $n = (int)q('SELECT COUNT(*) AS n FROM rate_items WHERE ' . implode(' AND ', $where), $p)->fetch()['n'];
+        if (!empty($d['dry_run'])) json_out(['would_change' => $n]);
+        $sql = 'UPDATE rate_items SET rate = ROUND(rate * ?, 2)' . ($both ? ', cost = ROUND(cost * ?, 2)' : '') . ' WHERE ' . implode(' AND ', $where);
+        q($sql, array_merge([$f], $both ? [$f] : [], $p));
+        audit($GLOBALS['CURRENT_USER'] ?? [], 'rates.bulk', sprintf('%+.2f%% on %d item(s)%s%s', (float)$pct, $n, !empty($d['division']) ? ' in ' . $d['division'] : '', $both ? ' (cost too)' : ''));
+        json_out(['changed' => $n]);
+    }
     if ($m === 'POST' && $b === 'import') {
         $d = body();
         $items = $d['items'] ?? [];
@@ -531,6 +549,13 @@ function quotes_route(string $m, ?string $b, ?string $c, array $user): void
     $id = (int)$b;
     $row = q('SELECT * FROM quotes WHERE id = ?', [$id])->fetch();
     if (!$row) fail('Quote not found', 404);
+
+    if ($m === 'GET' && $c === 'compare') {   // quotes/{id}/compare?with={other revision id}: what changed between two revisions of the same quote
+        $other = q('SELECT * FROM quotes WHERE id = ?', [(int)($_GET['with'] ?? 0)])->fetch();
+        if (!$other || $other['quote_no'] !== $row['quote_no']) fail('Pick another revision of the same quotation', 404);
+        [$old, $new] = (int)$other['rev'] <= (int)$row['rev'] ? [$other, $row] : [$row, $other];
+        json_out(quote_diff($old, $new));
+    }
 
     if ($m === 'GET' && $c === null) {
         $revs = q('SELECT id,rev,status,total,updated_at FROM quotes WHERE quote_no = ? ORDER BY rev DESC', [$row['quote_no']])->fetchAll();
@@ -675,4 +700,32 @@ function setup_checklist(): array
     ];
     $left = count(array_filter($items, fn($i) => !$i['done']));
     return ['items' => $items, 'left' => $left, 'dismissed' => get_setting('setup_dismissed') === '1' || $left === 0];
+}
+
+/** Line-by-line difference between two revisions of a quote (matched on section + description). */
+function quote_diff(array $old, array $new): array
+{
+    $flat = function (array $row): array {
+        $d = json_decode((string)$row['data'], true) ?: []; $out = [];
+        $add = function (string $prefix, array $secs) use (&$out) {
+            foreach ($secs as $sec) foreach ($sec['items'] ?? [] as $it) {
+                $k = mb_strtolower(trim($prefix . ($sec['title'] ?? '') . ' | ' . ($it['desc'] ?? '')));
+                $out[$k] = ['section' => $prefix . ($sec['title'] ?? ''), 'desc' => (string)($it['desc'] ?? ''), 'unit' => (string)($it['unit'] ?? ''), 'qty' => (float)($it['qty'] ?? 0), 'rate' => (float)($it['rate'] ?? 0), 'amount' => round((float)($it['qty'] ?? 0) * (float)($it['rate'] ?? 0), 2)];
+            }
+        };
+        $add('', $d['sections'] ?? []);
+        foreach ($d['options'] ?? [] as $o) $add(($o['name'] ?? 'Option') . ': ', $o['sections'] ?? []);
+        return $out;
+    };
+    $a = $flat($old); $b = $flat($new); $added = []; $removed = []; $changed = [];
+    foreach ($b as $k => $it) {
+        if (!isset($a[$k])) { $added[] = $it; continue; }
+        $x = $a[$k];
+        if (abs($x['qty'] - $it['qty']) > 0.0001 || abs($x['rate'] - $it['rate']) > 0.0001 || $x['unit'] !== $it['unit'])
+            $changed[] = ['section' => $it['section'], 'desc' => $it['desc'], 'unit' => $it['unit'], 'old_qty' => $x['qty'], 'new_qty' => $it['qty'], 'old_rate' => $x['rate'], 'new_rate' => $it['rate'], 'old_amount' => $x['amount'], 'new_amount' => $it['amount']];
+    }
+    foreach ($a as $k => $it) if (!isset($b[$k])) $removed[] = $it;
+    return ['old' => ['id' => (int)$old['id'], 'rev' => (int)$old['rev'], 'total' => (float)$old['total']], 'new' => ['id' => (int)$new['id'], 'rev' => (int)$new['rev'], 'total' => (float)$new['total']],
+        'total_change' => round((float)$new['total'] - (float)$old['total'], 2), 'added' => $added, 'removed' => $removed, 'changed' => $changed,
+        'title_changed' => $old['title'] !== $new['title'] ? ['old' => $old['title'], 'new' => $new['title']] : null];
 }

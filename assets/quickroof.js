@@ -44,11 +44,13 @@ function wireQuickRooms(root) {
 function quickRoofDialog(initial) {
   let svc = initial || 'roofing';
   const clients = S.clients || [];
+  const factors = String((S.settings && S.settings.price_factors) || '').split(/\r?\n/).map(l => l.split('|')).filter(a => a.length === 2 && a[0].trim() && !isNaN(parseFloat(a[1]))).map(a => [a[0].trim(), parseFloat(a[1])]);
   const m = openModal(`<h2>Quick quote</h2><p class="small muted">A few details in, a fully priced draft out. Prices come from your rate cards.</p><form id="qrf">
   <div class="pmc-modes" id="qsvc" role="group" aria-label="Service">${Object.entries(QUICK_SERVICES).map(([k, v]) => `<label class="${k === svc ? 'on' : ''}"><input type="radio" name="svc" value="${k}" ${k === svc ? 'checked' : ''}>${esc(v.label)}</label>`).join('')}</div>
   <label class="f"><span>Client</span><select name="client_id"><option value="">— new / not decided —</option>${clients.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
   <label class="f"><span>…or new client name</span><input name="client_name" autocomplete="off"></label>
   <div id="qfields">${quickFields(svc)}</div>
+  ${factors.length ? `<label class="f"><span>Price level</span><select name="price_factor"><option value="">Standard rates</option>${factors.map(([l, p]) => `<option value="${p}">${esc(l)} (${p > 0 ? '+' : ''}${p}%)</option>`).join('')}</select></label>` : ''}
   <label class="f"><span><input type="checkbox" name="send"> E-mail it to the client right away (needs a client with an e-mail)</span></label>
   <div class="row end"><button type="button" class="btn" id="qrx">Cancel</button><button class="btn pri">Create quote</button></div></form>`);
   const wireGroups = () => $$('.pmc-modes[data-group] input', m.el).forEach(i => { i.onchange = () => i.parentElement.classList.toggle('on', i.checked); });
@@ -63,6 +65,7 @@ function quickRoofDialog(initial) {
     const group = name => $$(`.pmc-modes[data-group=${name}] input:checked`, m.el).map(i => i.value);
     const num = k => (f.elements[k] && f.elements[k].value !== '' ? +f.elements[k].value : undefined);
     const chk = k => (f.elements[k] ? f.elements[k].checked : undefined);
+    if (f.elements.price_factor && f.elements.price_factor.value !== '') { body.price_factor = +f.elements.price_factor.value; body.price_factor_label = f.elements.price_factor.selectedOptions[0].textContent.replace(/\s*\([+-]?[\d.]+%\)$/, ''); }
     if (f.client_id.value) body.client_id = +f.client_id.value; else if (f.client_name.value.trim()) body.client = { name: f.client_name.value.trim() };
     if (svc === 'roofing') {
       const mats = group('materials'); if (!mats.length) return toast('Pick at least one material', 'err');

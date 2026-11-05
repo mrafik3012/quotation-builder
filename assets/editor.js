@@ -139,7 +139,7 @@ function drawEditor() {
   <div class="card"><h2>Notes (printed at the end)</h2><textarea data-b="data.notes" aria-label="Notes printed at the end" rows="9">${esc(Q.data.notes)}</textarea></div></div>
   </fieldset>
   ${activityHtml()}
-  ${Q.revisions && Q.revisions.length > 1 ? `<div class="card noprint"><h2>Revision history</h2>${Q.revisions.map(r => `<div class="row" style="margin-bottom:4px"><a href="#/quotes/${r.id}">Rev ${r.rev}</a>${statusChip(r.status)}<span class="muted small">${esc(r.updated_at)}</span><span class="sp"></span><b>${inr0(r.total)}</b></div>`).join('')}</div>` : ''}`;
+  ${Q.revisions && Q.revisions.length > 1 ? `<div class="card noprint"><h2>Revision history</h2>${Q.revisions.map(r => `<div class="row" style="margin-bottom:4px"><a href="#/quotes/${r.id}">Rev ${r.rev}</a>${statusChip(r.status)}<span class="muted small">${esc(r.updated_at)}</span><span class="sp"></span><b>${inr0(r.total)}</b>${r.id !== Q.id ? `<button class="btn sm" data-act="cmp" data-with="${r.id}" type="button">Compare with this</button>` : ''}</div>`).join('')}</div>` : ''}`;
   drawPmc(); drawSections(); drawOptions(); drawPay(); recalc();
   wireEditor(); wireClientSearch();
 }
@@ -333,6 +333,7 @@ function wireEditor() {
     const a = t.dataset.act, sec = t.closest('.sec'), si = sec && sec.dataset.s != null ? +sec.dataset.s : -1;
     if (a.startsWith('opt')) { if (a !== 'optsel') optionsClick(a, t); return; }
     if (a === 'latest') { e.preventDefault(); const l = Q.revisions.find(r => r.status !== 'superseded') || Q.revisions[0]; if (l) location.hash = '#/quotes/' + l.id; }
+    else if (a === 'cmp') guard(() => compareRevisions(+t.dataset.with));
     else if (a === 'save') guard(saveQuote);
     else if (a === 'share') guard(shareQuote);
     else if (a === 'emailq') guard(async () => { if (Q.status !== 'accepted') await ensureSaved(); emailQuoteDialog(); });
@@ -528,4 +529,17 @@ async function pagePrint(id) {
   $('#view').innerHTML = `<div class="toolbar noprint"><a class="btn" href="#/quotes/${Q.id}">← Back to editor</a><button class="btn pri" id="pr">Print / Save as PDF</button><span class="muted small">In the print dialog choose “Save as PDF” as the destination. Turn off “Headers and footers” for a clean page.</span></div>
   ${quoteDocHtml(S.settings)}`;
   $('#pr').onclick = () => window.print();
+}
+
+/* ---------- compare two revisions of a quote ---------- */
+async function compareRevisions(withId) {
+  const d = await api(`quotes/${Q.id}/compare&with=${withId}`);
+  const line = (x, cls, tag) => `<tr class="${cls}"><td>${tag}</td><td>${esc(x.section || '')}</td><td>${esc(x.desc)}</td><td class="r">${x.old_qty != null ? `${n(x.old_qty)} → ${n(x.new_qty)}` : n(x.qty)}</td><td class="r">${x.old_rate != null ? `${inr0(x.old_rate)} → ${inr0(x.new_rate)}` : inr0(x.rate)}</td><td class="r">${x.old_amount != null ? `${inr0(x.old_amount)} → ${inr0(x.new_amount)}` : inr0(x.amount)}</td></tr>`;
+  const rows = d.changed.map(x => line(x, 'chg', '~')).join('') + d.added.map(x => line(x, 'add', '+')).join('') + d.removed.map(x => line(x, 'rem', '−')).join('');
+  const sign = d.total_change > 0 ? '+' : '';
+  const m = openModal(`<h2>Rev ${d.old.rev} → Rev ${d.new.rev}</h2>
+   <p>Total: <b>${inr0(d.old.total)}</b> → <b>${inr0(d.new.total)}</b> <span style="color:${d.total_change > 0 ? 'var(--bad)' : 'inherit'}">(${sign}${inr0(d.total_change)})</span>${d.title_changed ? `<br><span class="muted small">Title changed: “${esc(d.title_changed.old)}” → “${esc(d.title_changed.new)}”</span>` : ''}</p>
+   ${rows ? `<div class="scroll" tabindex="0" role="region" aria-label="Changes between revisions"><table class="t"><thead><tr><th></th><th>Section</th><th>Item</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead><tbody>${rows}</tbody></table></div><p class="muted small">~ changed · + added · − removed</p>` : '<p class="muted">No line items changed between these revisions.</p>'}
+   <div class="row end"><button class="btn pri" id="cmpx" type="button">Close</button></div>`, true);
+  $('#cmpx', m.el).onclick = m.close;
 }

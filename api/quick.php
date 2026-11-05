@@ -11,8 +11,9 @@ const QUICK_DIVISIONS = ['interior', 'construction', 'pmc'];
 function qline(string $division, string $name, string $unit, float $qty, float $defRate, ?float $rateOverride = null, ?string $desc = null): array
 {
     $it = q('SELECT name, unit, rate, cost FROM rate_items WHERE division = ? AND name = ? AND active = 1 LIMIT 1', [$division, $name])->fetch();
-    $rate = $rateOverride ?? ($it ? (float)$it['rate'] : $defRate);
-    $cost = $rateOverride !== null ? round($rateOverride * 0.8, 2) : ($it ? (float)$it['cost'] : round($defRate * 0.8, 2));
+    $f = (float)($GLOBALS['QUICK_FACTOR'] ?? 1.0);
+    $rate = $rateOverride ?? (($it ? (float)$it['rate'] : $defRate) * $f);
+    $cost = $rateOverride !== null ? round($rateOverride * 0.8, 2) : (($it ? (float)$it['cost'] : round($defRate * 0.8, 2)) * $f);
     return ['desc' => $desc ?? $name, 'unit' => $it ? (string)$it['unit'] : $unit, 'qty' => round($qty, 2), 'rate' => round($rate, 2), 'cost' => $cost, 'note' => ''];
 }
 
@@ -226,6 +227,7 @@ function quick_quote_create(string $division, array $a, array $user): array
     $valid = ['interior' => ['standard', 'premium'], 'construction' => ['grey', 'standard', 'premium'], 'pmc' => ['full', 'part']][$division];
     $want = isset($a['variants']) && is_array($a['variants']) && $a['variants'] ? array_values(array_unique(array_map('strval', $a['variants']))) : [(string)($a['variant'] ?? ($division === 'pmc' ? 'full' : 'standard'))];
     foreach ($want as $v) if (!in_array($v, $valid, true)) fail('variant must be one of: ' . implode(', ', $valid));
+    $GLOBALS['QUICK_FACTOR'] = price_factor_from($a);
     $built = array_map(fn($v) => [$v, ...match ($division) { 'interior' => (!empty($a['rooms']) ? quick_interior_rooms($a, $v) : quick_interior($a, $v)), 'construction' => (!empty($a['detailed']) ? quick_construction_boq($a, $v) : quick_construction($a, $v)), 'pmc' => quick_pmc($a, $v) }], $want);
 
     if (!empty($a['client_id'])) { $cl = q('SELECT * FROM clients WHERE id = ?', [(int)$a['client_id']])->fetch(); if (!$cl) fail('client_id not found'); $client = ['name' => $cl['name'], 'contact_person' => $cl['contact_person'], 'phone' => $cl['phone'], 'email' => $cl['email'], 'address' => $cl['address'], 'gstin' => $cl['gstin']]; }
@@ -238,6 +240,7 @@ function quick_quote_create(string $division, array $a, array $user): array
 
     $data = build_quote_input(['gst_percent' => $a['gst_percent'] ?? null, 'discount_percent' => $a['discount_percent'] ?? null, 'notes' => $a['notes'] ?? '', 'site_address' => $a['site_address'] ?? ''], $division);
     $data['source'] = 'Quick quote';
+    if ($GLOBALS['QUICK_FACTOR'] != 1.0) $data['notes'] = trim(($data['notes'] ?? '') . "\n" . price_factor_note($a));
     if (($division === 'construction' && !empty($a['detailed'])) || ($division === 'interior' && !empty($a['rooms']))) $data['notes'] = trim(($data['notes'] ?? '') . "\nQuantities are estimates from room dimensions / standard thumb rules and are confirmed on site measurement or approved drawings.");
     $data['scope'] = $built[0][3];
     if (count($built) === 1) $data['sections'] = $built[0][1];
@@ -247,6 +250,7 @@ function quick_quote_create(string $division, array $a, array $user): array
         $data['scope'] = 'Choose the option that suits you: ' . implode('; ', array_map(fn($b) => ucfirst($b[0]) . ' - ' . $b[2], $built)) . '.';
     }
     $title = a_str($a, 'title') ?: (count($built) === 1 ? $built[0][2] : ucfirst($division) . ' - ' . implode(' / ', array_map(fn($b) => ucfirst($b[0]), $built)));
+    unset($GLOBALS['QUICK_FACTOR']);
     $r = create_quote($user, ['division' => $division, 'client_id' => $cl ? (int)$cl['id'] : null, 'client' => $client, 'title' => mb_substr($title, 0, 250), 'data' => $data]);
     $out = ['quote_id' => $r['id'], 'quote_no' => $r['quote_no'], 'status' => 'draft', 'division' => $division, 'client' => $client['name'] ?? '', 'title' => $title,
         'app_url' => app_base_url() . '/index.html#/quotes/' . $r['id'], 'warnings' => empty($a['client_id']) && empty($a['client']['name'] ?? '') ? ['No client was given, so the draft is under "Client to be confirmed".'] : []];
