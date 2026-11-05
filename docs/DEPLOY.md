@@ -54,6 +54,9 @@ Dashboard → **⚡ Quick quote**: choose the service, pick (or type) the client
 
 Pick several finishes/materials/scopes and the client gets **one quote with options** to choose from. Because prices are read from the rate cards, updating a rate changes every future quick quote. The same engine serves AI assistants (`create_quick_quote`, see [MCP.md](MCP.md)).
 
+### Client portal
+In a project, **Client portal** creates a private link where the client follows progress: work-progress bar, site updates with photos, payment schedule with due dates and status, payments received, change orders waiting for approval, and a link to their quotation. Costs, margins and internal notes are never shown. E-mail it, WhatsApp it, preview it, make a new link, or turn it off (the old link stops working at once). When a client accepts a quote and the project is created automatically, their thank-you e-mail already contains the portal button.
+
 ### Pricing tools
 - **Bulk price change** (Rate Cards → *Bulk price change*, admin): raise or lower rates by a percentage for one service or all, optionally cost prices too. Shows how many items will change first. Existing quotes are not touched. Every change is in the audit log.
 - **Price levels** (Settings → *Price factors for quick quotes*): lines like `Metro|12` and `Smaller town|-8`. Choose one in **Quick quote → Price level** and every rate in that quote moves by that percentage; the quote notes the adjustment.

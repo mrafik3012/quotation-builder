@@ -23,6 +23,7 @@ try {
     if ($method === 'POST') rate_limit('pubpost:' . $ip, 15, 600);
 
     if ($act === 'variation' || $act === 'variation-respond') variation_public($act, $method, $tok, $ip);
+    if ($act === 'portal' || $act === 'portal-photo') portal_public($act, $tok);
     $share = q('SELECT quote_no FROM quote_shares WHERE token = ?', [$tok])->fetch();
     if (!$share) fail('This link is not valid or has been withdrawn', 404);
     $row = q('SELECT * FROM quotes WHERE quote_no = ? AND is_latest = 1', [$share['quote_no']])->fetch();
@@ -147,7 +148,7 @@ function notify_quote_event(array $row, string $what, array $detail): void
         notify_admins('ACCEPTED: ' . $row['quote_no'] . ' - ' . ($cl['name'] ?? '') . ' - ' . $inr, 'Quotation accepted', '<p>' . $who . ' accepted quotation <b>' . $e($row['quote_no']) . '</b> for <b>' . $inr . '</b>.' . (!empty($detail['option']) ? '<br>Option: ' . $e($detail['option']) : '') . $note . '</p>', [$pid ? 'Open project' : 'Open quotation', $pid ? app_base_url() . '/index.html#/projects/' . $pid : $link], $creator);
         if (get_setting('confirm_client') !== '0' && mail_configured() && filter_var($cl['email'] ?? '', FILTER_VALIDATE_EMAIL)) {
             $co = (string)(get_setting('company_name') ?: 'Infraura');
-            send_mail($cl['email'], 'Thank you - quotation ' . $row['quote_no'] . ' accepted', email_html('Thank you', '<p>Dear ' . $who . ',</p><p>Thank you for accepting quotation <b>' . $e($row['quote_no']) . '</b> (' . $inr . '). Our team will contact you shortly to schedule the work.</p><p>' . $e($co) . '</p>'));
+            send_mail($cl['email'], 'Thank you - quotation ' . $row['quote_no'] . ' accepted', email_html('Thank you', '<p>Dear ' . $who . ',</p><p>Thank you for accepting quotation <b>' . $e($row['quote_no']) . '</b> (' . $inr . '). Our team will contact you shortly to schedule the work.' . ($pid ? ' You can follow progress, site photos and your payment schedule at any time using the button below.' : '') . '</p><p>' . $e($co) . '</p>', $pid ? ['Follow your project', portal_link(portal_token_for($pid))] : null));
         }
     });
 }
@@ -187,4 +188,35 @@ function variation_public(string $act, string $method, string $tok, string $ip):
         json_out(['ok' => true, 'status' => $new]);
     }
     fail('Not found', 404);
+}
+
+/** Client portal: read-only view of one project - progress, site photos, payment schedule, amounts received. Never exposes costs, margins or internal notes. */
+function portal_public(string $act, string $tok): void
+{
+    $pr = q('SELECT id FROM projects WHERE portal_token = ?', [$tok])->fetch();
+    if (!$pr) fail('This link is not valid or has been withdrawn', 404);
+    $pid = (int)$pr['id'];
+    if ($act === 'portal-photo') {
+        $lg = q('SELECT photos FROM project_log WHERE id = ? AND project_id = ?', [(int)($_GET['l'] ?? 0), $pid])->fetch();
+        $ph = $lg ? (json_decode((string)$lg['photos'], true) ?: []) : [];
+        $i = (int)($_GET['i'] ?? 0);
+        if (!isset($ph[$i]) || !preg_match('#^data:image/(jpeg|png);base64,([A-Za-z0-9+/=]+)$#', (string)$ph[$i], $m)) fail('Photo not found', 404);
+        header('Content-Type: image/' . $m[1]); header('Cache-Control: private, max-age=3600'); header('X-Content-Type-Options: nosniff'); header("Content-Security-Policy: default-src 'none'");
+        echo base64_decode($m[2]); exit;
+    }
+    $d = project_detail($pid); $p = $d['project'];
+    $st = [];
+    foreach (['company_name', 'company_tagline', 'company_address', 'company_phone', 'company_email', 'company_gstin'] as $k) $st[$k] = get_setting($k) ?? '';
+    $progress = null; $updates = [];
+    foreach (array_slice($d['log'], 0, 15) as $l) {
+        if ($progress === null && $l['progress'] !== null && $l['progress'] !== '') $progress = (float)$l['progress'];
+        $updates[] = ['id' => $l['id'], 'date' => $l['log_date'], 'text' => $l['text'], 'progress' => $l['progress'] !== null && $l['progress'] !== '' ? (float)$l['progress'] : null, 'photos' => count($l['photos'])];
+    }
+    $ms = array_map(fn($m) => ['label' => $m['label'], 'amount' => $m['net'], 'due_date' => $m['due_date'], 'state' => $m['state'], 'overdue' => (bool)$m['overdue'], 'paid' => $m['paid'], 'invoice_no' => $m['invoice_no'] ?: null], $d['milestones']);
+    $rc = array_map(fn($r) => ['date' => $r['received_on'], 'amount' => $r['amount'], 'mode' => $r['mode'] ?? '', 'receipt_no' => $r['receipt_no'] ?? null], array_reverse($d['receipts']));
+    $vr = array_map(fn($v) => ['title' => $v['title'], 'note' => $v['note'], 'total' => round((float)$v['amount'] * (1 + (float)$p['tax_rate'] / 100), 2), 'status' => $v['status'], 'approve_link' => $v['status'] === 'proposed' && !empty($v['approval_token']) ? app_base_url() . '/approve.html?t=' . $v['approval_token'] : null], $d['variations']);
+    $sh = q('SELECT token FROM quote_shares WHERE quote_no = ?', [$p['quote_no']])->fetch();
+    $cl = ($d['quote']['client'] ?? null) ?: [];
+    json_out(['settings' => $st, 'project' => ['name' => $p['name'], 'quote_no' => $p['quote_no'], 'status' => $p['status'], 'start_date' => $p['start_date'], 'end_date' => $p['end_date'], 'amc_end' => $p['amc_end'], 'client' => is_array($cl) ? ($cl['name'] ?? '') : '', 'progress' => $progress],
+        'totals' => ['contract' => $d['totals']['contract'], 'received' => $d['totals']['received'], 'outstanding' => $d['totals']['outstanding']], 'milestones' => $ms, 'receipts' => $rc, 'variations' => $vr, 'updates' => $updates, 'quote_link' => $sh ? app_base_url() . '/view.html?t=' . $sh['token'] : null]);
 }
