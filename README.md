@@ -16,7 +16,7 @@ PHP 8 + MySQL, no build step — runs on Hostinger Cloud / shared hosting.
 1. **hPanel → Databases → MySQL Databases**: create an empty database and user. Note the host (usually `localhost`), name, user, password.
 2. **File Manager** (or Git deploy): upload everything in this repo into `public_html` (or a subfolder).
 3. Open `https://your-domain/install.php`, enter the database details, company name and your admin login.
-4. **Delete `install.php`** from the server when it says "Installed".
+4. The installer checks the server, then **deletes itself** and switches on the HTTPS redirect (if opened over https). A "Finish setting up" checklist on the dashboard covers the rest.
 5. Sign in. Go to **Settings** and fill in company details, logo, GSTIN, bank details and signatory.
 6. Go to **Rate Cards** and replace the starter rates with your real costs.
 7. Once SSL is active, uncomment the HTTPS redirect in `.htaccess`.
@@ -32,7 +32,8 @@ PHP 8.0+ with `pdo_mysql` is required (default on Hostinger).
 - **Interior** rooms and photos, **Reports** (win rate, margin, salesperson, lead source, aging, receivables), CSV export.
 - **Accounts & security** - two-step sign-in (authenticator app + recovery codes), forgot/reset password by e-mail, admin password reset, last-admin protection, sign-in lockout, roles, rate limits, audit log.
 - **E-mail** (SMTP) - quotes to clients, reset links, daily summary, optional client reminders.
-- **Operations** - daily cron job (backup, summary e-mail, reminders), health endpoint for uptime monitors, error log, system-health card, JSON backup, **privacy tools** (export / erase client data), paginated lists tested at 4,000+ quotes, installable PWA.
+- **Automation** - the app runs its own backups/summaries/reminders (no cron needed), e-mails you when a client opens/accepts/declines, creates the project on acceptance, chases overdue payments (opt-in), and can auto-deploy from GitHub to Hostinger.
+- **Operations** - daily jobs (backup, summary e-mail, reminders; optional cron), health endpoint for uptime monitors, error log, system-health card, JSON backup, **privacy tools** (export / erase client data), paginated lists tested at 4,000+ quotes, installable PWA.
 - **AI assistants** - built-in MCP server with OAuth: see below.
 - Database upgrades run automatically on first admin sign-in after uploading new files (`api/migrate.php`).
 
@@ -45,11 +46,11 @@ All rates are placeholders - replace them with your real costs.
 The app is an **MCP server** (`api/mcp.php`) with OAuth sign-in: *"provide a roofing quotation for GI sheet, 60x30 ft, A-type"* creates a priced **draft** quote in one step. Assistants can search quotes and rate cards, price roofs and draft quotations - never send, accept, delete, record payments or change settings; an admin approves each connection and chooses the access level. Setup for Claude.ai, Claude Code, Claude Desktop, Cursor and VS Code: [docs/MCP.md](docs/MCP.md).
 
 ## Deploying and running it
-Step-by-step install, e-mail, cron/backups, monitoring, upgrades, privacy requests and troubleshooting: **[docs/DEPLOY.md](docs/DEPLOY.md)**. Short version: upload, run `install.php`, delete it, turn on HTTPS, fill in Settings, replace the starter rates and costs, turn on 2-step sign-in, set up the daily cron job and e-mail, have your CA confirm the GST set-up.
+Step-by-step install, e-mail, cron/backups, monitoring, upgrades, privacy requests and troubleshooting: **[docs/DEPLOY.md](docs/DEPLOY.md)**. Short version: upload, run `install.php` (it removes itself), follow the dashboard checklist (Settings, rates and costs, e-mail, 2-step sign-in), have your CA confirm the GST set-up.
 
 ## Tests
 ```
-tests/run.sh            # money-math + roof parity, API, MCP, OAuth, accounts, billing, features, cron, scale (SQLite, throw-away install)
+tests/run.sh            # money-math + roof parity, API, MCP, OAuth, accounts, billing, features, cron, automation, scale (SQLite, throw-away install)
 tests/run.sh --e2e      # + Playwright browser tests: XSS in every field, mobile layout, real PDF output, 2FA UI, pagination, accessibility (axe)
 MYSQL_DB=... MYSQL_USER=... MYSQL_PASS=... tests/run.sh --e2e     # same against MySQL (empty database)
 BASE=http://your-apache-host node tests/apache.test.js            # .htaccess behaviour (blocked internals, rewrites, headers) on real Apache
@@ -80,7 +81,8 @@ api/lib.php           helpers, money maths, rate limiting, quote numbering
 api/core.php          shared business logic (quotes, rates, reports, roof calculator)
 api/mcp.php           MCP server for AI assistants
 api/oauth.php         OAuth 2.1 server for MCP connectors
-api/cron.php          scheduled jobs (backup, digest, reminders)
+api/jobs.php          scheduled jobs + background runner (backup, digest, reminders, notifications)
+api/cron.php          optional cron entry point for the same jobs
 api/health.php        uptime-monitor endpoint
 api/mail.php          SMTP / mail() sender
 api/auth.php          TOTP 2FA, recovery codes, shared sign-in check
@@ -89,5 +91,5 @@ api/projects.php      projects, milestones, payments, invoices
 api/migrate.php       automatic database upgrades
 tests/                API, MCP, parity and browser tests
 api/setup.php         schema + starter data (used by the installer)
-install.php           one-time installer (delete after use)
+install.php           one-time installer (deletes itself)
 ```

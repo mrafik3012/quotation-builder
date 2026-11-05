@@ -103,6 +103,38 @@ const pub = (tok, r, body) => fetch(`${BASE}/api/public.php?r=${r}&t=${tok}`, { 
     const st = new Client(BASE); await st.api('POST', 'auth/login', { email, password: 'staffpass1' }); eq((await st.api('GET', 'setup')).status, 403);
   });
 
+  console.log('\nInstaller');
+  const fs = require('fs'), os = require('os'), { spawn } = require('child_process');
+  const fresh = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'qbinst-')); fs.cpSync(APP_DIR, d, { recursive: true, filter: s => !/config\.php$|\.sqlite$|[\\/]backups/.test(s) && !/[\\/]data[\\/]/.test(s) }); try { fs.rmSync(path.join(d, 'api', 'config.php'), { force: true }); } catch (e) {} return d; };
+  await test('CLI install with --self-delete removes install.php', async () => {
+    const d = fresh(); const out = execFileSync('php', ['install.php', '--sqlite', '--email=z@y.com', '--password=changeme123', '--self-delete'], { cwd: d }).toString();
+    ok(/install.php removed/.test(out), out); ok(!fs.existsSync(path.join(d, 'install.php'))); ok(fs.existsSync(path.join(d, 'api', 'config.php')));
+  });
+  await test('web install over HTTPS deletes itself and switches the HTTPS redirect on', async () => {
+    const d = fresh(); const port = 8890 + Math.floor(Math.random() * 90);
+    const srv = spawn('php', ['-S', `127.0.0.1:${port}`], { cwd: d, stdio: 'ignore' }); await new Promise(r => setTimeout(r, 800));
+    try {
+      const form = new URLSearchParams({ driver: 'sqlite', name: 'Web Admin', email: 'web@y.com', password: 'changeme123', company: 'Web Co' });
+      const r = await fetch(`http://127.0.0.1:${port}/install.php`, { method: 'POST', headers: { 'X-Forwarded-Proto': 'https', 'Content-Type': 'application/x-www-form-urlencoded' }, body: form });
+      const html = await r.text(); ok(/Installed/.test(html) && /deleted itself/.test(html), html.slice(0, 400));
+      ok(!fs.existsSync(path.join(d, 'install.php')), 'install.php gone'); ok(/^RewriteCond %\{HTTPS\} off/m.test(fs.readFileSync(path.join(d, '.htaccess'), 'utf8')), 'redirect active');
+    } finally { srv.kill(); }
+  });
+  await test('a plain-HTTP web install leaves the redirect off (so it cannot lock you out before SSL exists)', async () => {
+    const d = fresh(); const port = 8890 + Math.floor(Math.random() * 90);
+    const srv = spawn('php', ['-S', `127.0.0.1:${port}`], { cwd: d, stdio: 'ignore' }); await new Promise(r => setTimeout(r, 800));
+    try {
+      const form = new URLSearchParams({ driver: 'sqlite', name: 'Web Admin', email: 'web@y.com', password: 'changeme123' });
+      await fetch(`http://127.0.0.1:${port}/install.php`, { method: 'POST', body: form });
+      ok(/^# RewriteCond %\{HTTPS\} off/m.test(fs.readFileSync(path.join(d, '.htaccess'), 'utf8')), 'redirect still commented out');
+    } finally { srv.kill(); }
+  });
+  await test('the installer form lists missing requirements up front (none here)', async () => {
+    const d = fresh(); const port = 8890 + Math.floor(Math.random() * 90);
+    const srv = spawn('php', ['-S', `127.0.0.1:${port}`], { cwd: d, stdio: 'ignore' }); await new Promise(r => setTimeout(r, 800));
+    try { const html = await (await fetch(`http://127.0.0.1:${port}/install.php`)).text(); ok(/Database name/.test(html) && !/not ready yet/.test(html), 'form shows, no problems'); } finally { srv.kill(); }
+  });
+
   smtp.close();
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);

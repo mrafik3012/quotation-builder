@@ -47,13 +47,13 @@ const ok = (c, m) => { if (c) { passed++; console.log('  ok   ' + m); } else { f
   await api('POST', 'users', { name: XSS, email: `x${Date.now()}@example.com`, password: 'password123', role: 'staff' });
   const share = (await api('POST', `quotes/${qid}/share`)).data.token;
   // accept via API so we can build a project from it
+  await api('PUT', 'settings', { auto_project: '0' });   // this test creates the project by hand
   await page.request.fetch(`${BASE}/api/public.php?r=respond&t=${share}`, { method: 'POST', headers: { 'X-Requested-With': 'infraura', 'Content-Type': 'application/json' }, data: JSON.stringify({ action: 'accept', name: XSS, note: XSS, option: 0, expected_total: 2 * 100 * 1.18 * 1 + 0, signature: '' }) }).catch(() => {});
   // the line above may be refused if the expected total differs; compute it properly
   const cur = (await api('GET', `quotes/${qid}`)).data.quote;
   if (cur.status !== 'accepted') {
     await page.request.fetch(`${BASE}/api/public.php?r=respond&t=${share}`, { method: 'POST', headers: { 'X-Requested-With': 'infraura', 'Content-Type': 'application/json' }, data: JSON.stringify({ action: 'accept', name: XSS, note: XSS, option: 0, expected_total: cur.total }) });
   }
-  await api('PUT', 'settings', { auto_project: '0' });
   const proj = await api('POST', 'projects', { quote_id: qid });
   const pid = proj.data && proj.data.id;
   if (pid) {

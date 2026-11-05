@@ -1,0 +1,117 @@
+name: deploy
+# Automatic deployment to Hostinger (or any FTP/FTPS host): every time the "tests" workflow passes on main,
+# the app files are uploaded and a smoke test confirms the live site is healthy.
+# Nothing happens until you add the repository secrets listed in docs/DEPLOY.md (section "Automatic deploys").
+on:
+  workflow_run:
+    workflows: [tests]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      include_installer:
+        description: 'Also upload install.php (first deployment only)'
+        type: boolean
+        default: false
+
+concurrency: { group: deploy, cancel-in-progress: false }
+
+jobs:
+  deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Check configuration
+        id: cfg
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          if [ -z "$FTP_SERVER" ] || [ -z "$FTP_USERNAME" ] || [ -z "$FTP_PASSWORD" ] || [ -z "$SITE_URL" ]; then
+            echo "::notice::Deploy skipped - add FTP_SERVER, FTP_USERNAME, FTP_PASSWORD and SITE_URL secrets (see docs/DEPLOY.md)."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.ready == 'true'
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      # Normal deploys never touch install.php, api/config.php, api/data (database, backups, logs) or developer-only folders.
+      - name: Upload files
+        if: steps.cfg.outputs.ready == 'true' && !inputs.include_installer
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ${{ secrets.FTP_PROTOCOL || 'ftps' }}
+          server-dir: ${{ secrets.FTP_DIR || './' }}
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            .github/**
+            tests/**
+            docs/**
+            node_modules/**
+            install.php
+            api/config.php
+            api/data/**
+            *.md
+
+      - name: Upload files (first install, includes install.php)
+        if: steps.cfg.outputs.ready == 'true' && inputs.include_installer
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ${{ secrets.FTP_PROTOCOL || 'ftps' }}
+          server-dir: ${{ secrets.FTP_DIR || './' }}
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            .github/**
+            tests/**
+            docs/**
+            node_modules/**
+            api/config.php
+            api/data/**
+            *.md
+
+      # Runs database upgrades (and the daily jobs) right away, then checks the live site.
+      - name: Smoke test
+        if: steps.cfg.outputs.ready == 'true'
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+          CRON_KEY: ${{ secrets.CRON_KEY }}
+        run: |
+          base="${SITE_URL%/}"
+          if [ -n "$CRON_KEY" ]; then
+            echo "Upgrading database and running jobs..."
+            curl -fsS --retry 3 --retry-delay 5 "$base/api/cron.php?key=$CRON_KEY" || { echo "::warning::cron.php call failed (is CRON_KEY correct?)"; }
+          else
+            echo "::notice::CRON_KEY not set - the database upgrades itself the next time an admin signs in."
+          fi
+          for i in 1 2 3 4 5; do
+            code=$(curl -s -o /tmp/health.json -w '%{http_code}' "$base/api/health.php" || true)
+            [ "$code" = "200" ] && break
+            echo "health check returned $code, retrying..."; sleep 6
+          done
+          cat /tmp/health.json; echo
+          [ "$code" = "200" ] || { echo "::error::Health check failed after deploy (HTTP $code). Restore the previous version from GitHub (re-run an older deploy) and check Settings > System health."; exit 1; }
+          for p in index.html assets/app.js view.html; do
+            c=$(curl -s -o /dev/null -w '%{http_code}' "$base/$p"); [ "$c" = "200" ] || { echo "::error::$p returned $c"; exit 1; }
+          done
+          # private files must not be public
+          for p in api/config.php api/data/ api/lib.php; do
+            c=$(curl -s -o /dev/null -w '%{http_code}' "$base/$p"); case "$c" in 200) echo "::error::$p is publicly readable ($c)"; exit 1;; esac
+          done
+          echo "Deploy OK"
