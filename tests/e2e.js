@@ -165,6 +165,11 @@ const ok = (c, m) => { if (c) { passed++; console.log('  ok   ' + m); } else { f
   await page.fill('input[name=client_name]', 'Browser Quick Co'); await page.fill('input[name=length_ft]', '60'); await page.fill('input[name=width_ft]', '30');
   await page.click('#qrf button.pri'); await page.waitForFunction(() => /#\/quotes\/\d+/.test(location.hash), null, { timeout: 8000 });
   ok(/#\/quotes\/\d+/.test(page.url()), 'quick quote opens the new draft');
+  await go('#/dashboard'); await page.waitForSelector('#quickroof'); await page.click('#quickroof'); await page.waitForSelector('#qrf');
+  await page.click('#qsvc label:has(input[value=interior])'); await page.waitForSelector('select[name=bhk]');
+  if (axeSrc) { await page.evaluate(axeSrc); const r = await page.evaluate(async () => await axe.run(document, { runOnly: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] })); const bad = r.violations.filter(v => ['serious', 'critical'].includes(v.impact)); ok(bad.length === 0, 'interior quick-quote form: no serious/critical a11y issues' + (bad.length ? ' - ' + bad.map(v => v.id).join(', ') : '')); }
+  await page.fill('input[name=client_name]', 'Browser Interior Co'); await page.click('#qrf button.pri'); await page.waitForFunction(() => /#\/quotes\/\d+/.test(location.hash), null, { timeout: 8000 });
+  ok(/#\/quotes\/\d+/.test(page.url()), 'interior quick quote opens the new draft');
 
   /* ---------- staff UI ---------- */
   console.log('\nStaff role UI');

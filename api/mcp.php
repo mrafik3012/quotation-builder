@@ -10,6 +10,7 @@ declare(strict_types=1);
  */
 require __DIR__ . '/lib.php';
 require __DIR__ . '/core.php';
+require_once __DIR__ . '/quick.php';
 require __DIR__ . '/migrate.php';
 require __DIR__ . '/projects.php';
 
@@ -345,6 +346,12 @@ function mcp_tools(): array
         'annotations' => $wr, 'run' => function (array $a) {
             return roofing_quote_create($a, $GLOBALS['MCP_USER']);
         }];
+    $T['create_quick_quote'] = ['scope' => 'write', 'title' => 'Create quick quote (interior / construction / PMC)', 'description' => 'ONE-STEP priced DRAFT for the non-roofing services, from a few inputs, priced from the rate card. interior: bhk (1-6), optional carpet_sqft, variant standard|premium. construction: built_up_sqft, optional floors, variant grey|standard|premium (grey = structure only), optional include_design / include_waterproofing / include_approvals. pmc: duration_months plus project_cost (Rs) or built_up_sqft, variant full|part, optional site_staff. Give "variants" (several) to create ONE quote with selectable options. Client: client_id or client {name,...}; if omitted the draft sits under "Client to be confirmed" - ask the user for the client. A person reviews and sends it.',
+        'inputSchema' => ['type' => 'object', 'properties' => ['division' => ['type' => 'string', 'enum' => QUICK_DIVISIONS], 'bhk' => ['type' => 'integer'], 'carpet_sqft' => ['type' => 'number'], 'built_up_sqft' => ['type' => 'number'], 'floors' => ['type' => 'integer'],
+            'project_cost' => ['type' => 'number', 'description' => 'PMC: project cost in rupees'], 'duration_months' => ['type' => 'integer'], 'site_staff' => ['type' => 'boolean'], 'include_design' => ['type' => 'boolean'], 'include_waterproofing' => ['type' => 'boolean'], 'include_approvals' => ['type' => 'boolean'],
+            'variant' => ['type' => 'string'], 'variants' => ['type' => 'array', 'items' => ['type' => 'string']], 'client_id' => ['type' => 'integer'], 'client' => $clientObj, 'title' => ['type' => 'string'], 'site_address' => ['type' => 'string'], 'notes' => ['type' => 'string'],
+            'discount_percent' => ['type' => 'number', 'minimum' => 0, 'maximum' => 100], 'gst_percent' => ['type' => 'number']], 'required' => ['division']],
+        'annotations' => $wr, 'run' => fn(array $a) => quick_quote_create((string)($a['division'] ?? ''), $a, $GLOBALS['MCP_USER'])];
     $T['list_projects'] = ['scope' => 'read', 'title' => 'List projects', 'description' => 'Projects created from accepted quotes with contract value, amount received, outstanding and overdue milestones.',
         'inputSchema' => ['type' => 'object', 'properties' => ['status' => ['type' => 'string', 'enum' => ['active', 'on_hold', 'completed']]]], 'annotations' => $ro, 'run' => function (array $a) {
             $rows = q("SELECT p.id,p.quote_no,p.name,p.division,p.status,p.base_value,p.tax_rate,(SELECT c.name FROM clients c WHERE c.id = p.client_id) AS client_name,

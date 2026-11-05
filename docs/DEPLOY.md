@@ -41,7 +41,16 @@ Point a free uptime monitor (UptimeRobot, Better Stack…) at `https://YOUR-DOMA
 Each of these can be switched off in **Settings → E-mail** (they need working e-mail to send messages; the project is created either way).
 
 ### Quoting in one step
-Dashboard → **⚡ Quick roofing quote**: pick (or type) the client, enter length × width, roof type and one or more materials, and tick *E-mail it to the client right away* if you want. The app calculates the roof, prices every line from your rate card, fills in scope, payment schedule and terms from Settings, saves the quote and (optionally) e-mails the client their link. You can open and tweak it afterwards. The same engine answers AI requests such as "60 × 30 ft GI A-type" (see [MCP.md](MCP.md)).
+Dashboard → **⚡ Quick quote**: choose the service, pick (or type) the client, give a few details and press *Create quote*. Tick *E-mail it to the client right away* to send it too. The draft is fully priced from your rate cards, with scope, payment schedule and terms from Settings; open it afterwards to tweak anything.
+
+| Service | You enter | The app adds |
+|---|---|---|
+| Roofing | length × width, roof type, material(s), frame/gutters yes-no | roof geometry, sheets, frame, purlins, flashings, gutters, screws, ventilators |
+| Interior | BHK (and carpet area if known), Standard and/or Premium | kitchen, wardrobes, TV unit, false ceiling, paint, electrical points |
+| Construction | built-up area, floors, Grey / Standard / Premium finish | turnkey cost, waterproofing, design, approvals, testing, insurance |
+| PMC | project cost (or area), months, Full or Part scope | fee by cost band (3% / 2.5% / 2%), site engineer & QS, quality and safety audits, handover |
+
+Pick several finishes/materials/scopes and the client gets **one quote with options** to choose from. Because prices are read from the rate cards, updating a rate changes every future quick quote. The same engine serves AI assistants (`create_quick_quote`, see [MCP.md](MCP.md)).
 
 ## 6. Connect AI assistants
 Settings → **AI assistants (MCP)**. Claude.ai: *Settings → Connectors → Add custom connector →* paste the server address, then sign in here and press Allow. Claude Code / Desktop / Cursor / VS Code: create a token and use the ready-made snippet. Details: [MCP.md](MCP.md).

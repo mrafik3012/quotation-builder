@@ -47,6 +47,7 @@ Always use **HTTPS**. OAuth discovery lives at `/.well-known/oauth-protected-res
 | Tool | Access | What it does |
 |---|---|---|
 | `create_roofing_quote` | write | **One step**: calculate + price + save a draft roofing quote (A-type/shed/flat, any material, optional several materials as options, optional sheets-only) |
+| `create_quick_quote` | write | **One step** for Interior (BHK, standard/premium), Construction (built-up area, grey/standard/premium) and PMC (project cost or area, months, full/part): priced from the rate card, saved as a draft; several variants become options |
 | `calculate_roof` | read | Roof geometry and priced packages for GI / UPVC / PUF / aluminium / polycarbonate… with ready-to-use lines |
 | `get_business_overview` | read | Pipeline, recent quotes, follow-ups, receivables, AMC renewals |
 | `search_quotes`, `get_quote` | read | Find quotes; full detail incl. options, GST, totals, client activity |

@@ -132,6 +132,44 @@ const pub = (tok, r, body) => fetch(`${BASE}/api/public.php?r=${r}&t=${tok}`, { 
     eq((await new Client(BASE).api('POST', 'quotes/quick-roofing', { length_ft: 10, width_ft: 20 })).status, 401);
   });
 
+  console.log('\nQuick quotes: interior, construction, PMC');
+  const qq = (div, body) => admin.api('POST', `quotes/quick/${div}`, { client: { name: 'QQ ' + div }, ...body });
+  await test('interior: 2 BHK standard -> priced draft with kitchen, wardrobes, ceiling, paint, electrical', async () => {
+    const r = await qq('interior', { bhk: 2 }); eq(r.status, 201); const g = r.data.totals.grand_total; ok(g > 500000 && g < 1500000, 'plausible 2BHK total ' + g);
+    const q = (await admin.api('GET', `quotes/${r.data.quote_id}`)).data.quote; eq(q.division, 'interior'); eq(q.data.sections.length, 3); ok(q.data.scope.includes('2 BHK'), 'scope text'); ok(q.data.payment_schedule.length > 0, 'payment schedule from Settings');
+  });
+  await test('interior: standard + premium -> one quote with 2 options, premium costs more; bigger home costs more', async () => {
+    const r = await qq('interior', { bhk: 3, variants: ['standard', 'premium'] }); eq(r.status, 201); eq(r.data.options.length, 2); ok(r.data.options[1].grand_total_incl_gst > r.data.options[0].grand_total_incl_gst, 'premium > standard');
+    const small = await qq('interior', { bhk: 1 }), big = await qq('interior', { bhk: 4 }); ok(big.data.totals.grand_total > small.data.totals.grand_total * 2, '4BHK >> 1BHK');
+  });
+  await test('construction: area x turnkey rate from the rate card, finish tiers, optional lines', async () => {
+    const std = await qq('construction', { built_up_sqft: 1500, variants: ['standard'] }); eq(std.status, 201);
+    const q = (await admin.api('GET', `quotes/${std.data.quote_id}`)).data.quote; const turnkey = q.data.sections[0].items[0]; eq(turnkey.qty, 1500); eq(turnkey.rate, 2400);
+    const all = await qq('construction', { built_up_sqft: 1500, variants: ['grey', 'standard', 'premium'] }); eq(all.data.options.length, 3); ok(all.data.options[0].grand_total_incl_gst < all.data.options[2].grand_total_incl_gst, 'grey < premium');
+    const lean = await qq('construction', { built_up_sqft: 1500, include_design: false, include_waterproofing: false, include_approvals: false }); ok(lean.data.totals.grand_total < std.data.totals.grand_total, 'lean is cheaper');
+  });
+  await test('rate-card edits flow into quick quotes', async () => {
+    const it = (await admin.api('GET', 'rates')).data.find(r => r.name === 'Turnkey construction - with finishing'); ok(it, 'rate item exists');
+    await admin.api('PUT', `rates/${it.id}`, { ...it, rate: 3000 });
+    const r = await qq('construction', { built_up_sqft: 1000, include_design: false, include_waterproofing: false, include_approvals: false });
+    eq((await admin.api('GET', `quotes/${r.data.quote_id}`)).data.quote.data.sections[0].items[0].rate, 3000);
+    await admin.api('PUT', `rates/${it.id}`, { ...it, rate: 2400 });
+  });
+  await test('pmc: % of project cost banded by size, site staff and audits scale with duration', async () => {
+    const r = await qq('pmc', { project_cost: 20000000, duration_months: 12 }); eq(r.status, 201);
+    const items = (await admin.api('GET', `quotes/${r.data.quote_id}`)).data.quote.data.sections[0].items; eq(items[0].rate, 600000, '3% of 2 cr'); ok(/3% of project cost/.test(items[0].desc), items[0].desc);
+    eq(items.find(i => /site engineer/.test(i.desc)).qty, 12); eq(items.find(i => /Quality audit/.test(i.desc)).qty, 6);
+    const big = await qq('pmc', { project_cost: 300000000, duration_months: 24 }); eq((await admin.api('GET', `quotes/${big.data.quote_id}`)).data.quote.data.sections[0].items[0].rate, 6000000, '2% above 25 cr');
+    const sq = await qq('pmc', { built_up_sqft: 20000, duration_months: 10, site_staff: false }); const sit = (await admin.api('GET', `quotes/${sq.data.quote_id}`)).data.quote.data.sections[0].items; eq(sit[0].qty, 20000); ok(!sit.some(i => /site engineer/.test(i.desc)), 'no site staff');
+    const part = await qq('pmc', { project_cost: 20000000, duration_months: 6, variant: 'part' }); ok(part.data.totals.grand_total < r.data.totals.grand_total, 'part scope cheaper');
+  });
+  await test('quick quotes: validation, auth, unknown service, e-mail to client', async () => {
+    eq((await qq('interior', { bhk: 9 })).status, 400); eq((await qq('construction', {})).status, 400); eq((await qq('pmc', { duration_months: 6 })).status, 400); eq((await qq('construction', { built_up_sqft: 1000, variant: 'gold' })).status, 400); eq((await qq('plumbing', {})).status, 400);
+    eq((await new Client(BASE).api('POST', 'quotes/quick/interior', { bhk: 2 })).status, 401);
+    smtp.messages.length = 0; const r = await admin.api('POST', 'quotes/quick/interior', { bhk: 2, send: true, client: { name: 'Interior Mail', email: 'imail@example.com' } }); eq(r.data.sent, true);
+    ok(mails().some(m => m.to.includes('imail@example.com')), 'mailed'); eq((await admin.api('GET', `quotes/${r.data.quote_id}`)).data.quote.status, 'sent');
+  });
+
   console.log('\nInstaller');
   const fs = require('fs'), os = require('os'), { spawn } = require('child_process');
   const fresh = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'qbinst-')); fs.cpSync(APP_DIR, d, { recursive: true, filter: s => !/config\.php$|\.sqlite$|[\\/]backups/.test(s) && !/[\\/]data[\\/]/.test(s) }); try { fs.rmSync(path.join(d, 'api', 'config.php'), { force: true }); } catch (e) {} return d; };
