@@ -104,6 +104,14 @@ function create_project_from_quote(array $qr): int
     return $pid;
 }
 
+/** Create the billing milestone for an approved variation (amount ex-GST -> milestone incl. GST). Returns the milestone id. */
+function variation_milestone(int $projectId, array $v): int
+{
+    $pr = q('SELECT tax_rate FROM projects WHERE id = ?', [$projectId])->fetch();
+    q('INSERT INTO project_milestones (project_id,label,percent,amount,kind,sort) VALUES (?,?,?,?,?,?)', [$projectId, 'Variation: ' . str($v['title'], 160), 0, round((float)$v['amount'] * (1 + (float)$pr['tax_rate'] / 100), 2), 'variation', 1000]);
+    return (int)db()->lastInsertId();
+}
+
 function projects_route(string $m, array $p, array $user): void
 {
     $id = isset($p[0]) && ctype_digit($p[0]) ? (int)$p[0] : null;
@@ -248,6 +256,24 @@ function projects_route(string $m, array $p, array $user): void
     }
 
     if ($sub === 'variations') {
+        if ($m === 'POST' && $sid !== null && ($p[3] ?? '') === 'request-approval') {
+            $v = q('SELECT * FROM project_variations WHERE id = ? AND project_id = ?', [$sid, $id])->fetch(); if (!$v) fail('Variation not found', 404);   // send the change order to the client for online approval
+            if ($v['status'] !== 'proposed') fail('Only a proposed variation can be sent for approval', 409);
+            if ((float)$v['amount'] <= 0) fail('Set the variation amount first');
+            $tok = $v['approval_token'] ?: bin2hex(random_bytes(16));
+            if (!$v['approval_token']) q('UPDATE project_variations SET approval_token = ? WHERE id = ?', [$tok, $sid]);
+            $link = app_base_url() . '/approve.html?t=' . $tok; $mailed = false; $note = '';
+            $proj = q('SELECT p.name, p.quote_no, p.tax_rate, c.name AS cname, c.email, c.contact_person FROM projects p LEFT JOIN clients c ON c.id = p.client_id WHERE p.id = ?', [$id])->fetch();
+            $to = strtolower(str(body()['to'] ?? '', 190)) ?: strtolower((string)($proj['email'] ?? ''));
+            if (filter_var($to, FILTER_VALIDATE_EMAIL) && mail_configured()) {
+                $e = fn($x) => htmlspecialchars((string)$x, ENT_QUOTES, 'UTF-8');
+                $total = (float)$v['amount'] * (1 + (float)$proj['tax_rate'] / 100); $co = (string)(get_setting('company_name') ?: 'Infraura');
+                [$mailed, $err] = send_mail($to, 'Change order for your approval: ' . $v['title'], email_html('Change order for approval', '<p>Dear ' . $e($proj['contact_person'] ?: $proj['cname']) . ',</p><p>We propose a change to <b>' . $e($proj['name']) . '</b>: <b>' . $e($v['title']) . '</b>. Additional cost: <b>Rs ' . number_format($total, 2) . '</b> including GST. Please review and approve online.</p>', ['Review & approve', $link]));
+                if (!$mailed) $note = 'E-mail could not be sent: ' . $err;
+            } else $note = 'No client e-mail on file (or e-mail not set up) - share the link yourself.';
+            audit($GLOBALS['CURRENT_USER'] ?? [], 'variation.request', $proj['quote_no'] . ' / ' . $v['title']);
+            json_out(['link' => $link, 'emailed' => $mailed, 'note' => $note]);
+        }
         if ($m === 'POST') {
             $d = body();
             $t = str($d['title'] ?? '', 255);

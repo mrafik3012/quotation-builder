@@ -535,9 +535,11 @@ function roofing_quote_create(array $a, array $user): array
     $clientArr = $cl ? ['name' => $cl['name'], 'contact_person' => $cl['contact_person'], 'phone' => $cl['phone'], 'email' => $cl['email'], 'address' => $cl['address'], 'gstin' => $cl['gstin']] : (is_array($a['client'] ?? null) ? $a['client'] : []);
     $g = $calc['geometry']; $L = money((float)$a['length_ft']); $W = money((float)$a['width_ft']);
     $typeTxt = ['gable' => 'A-type (gable)', 'shed' => 'mono-slope', 'flat' => 'flat'][$type];
-    $toItems = fn(array $pkg) => array_map(fn($l) => ['desc' => $l['desc'], 'unit' => $l['unit'], 'qty' => $l['qty'], 'rate' => $l['rate'], 'cost' => $l['cost']], $pkg['lines']);
+    $factor = price_factor_from($a);
+    $toItems = fn(array $pkg) => array_map(fn($l) => ['desc' => $l['desc'], 'unit' => $l['unit'], 'qty' => $l['qty'], 'rate' => round($l['rate'] * $factor, 2), 'cost' => round($l['cost'] * $factor, 2)], $pkg['lines']);
     $data = build_quote_input(['gst_percent' => $a['gst_percent'] ?? null, 'discount_percent' => $a['discount_percent'] ?? null, 'notes' => $a['notes'] ?? '', 'site_address' => $a['site_address'] ?? ''], 'roofing');
     $data['area_sqft'] = round($g['plan']);
+    if ($factor != 1.0) $data['notes'] = trim(($data['notes'] ?? '') . "\n" . price_factor_note($a));
     $data['scope'] = 'Supply and installation of ' . (count($mats) > 1 ? 'roof sheeting (options below)' : ROOF_MATS[$mats[0]]['label'] . ' roof sheeting') . " for a {$L} x {$W} ft {$typeTxt} building (roof area approx. " . roof_in_words($g['area']) . ' sq ft including slope), with ' . ($in['structure'] === 'yes' ? 'supporting steel structure, ' : '') . 'flashings' . (($in['gutter'] === 'yes') ? ', gutters and downpipes' : '') . ' and fasteners.';
     if (count($mats) === 1) $data['sections'] = [['title' => 'Roofing - ' . ROOF_MATS[$mats[0]]['label'], 'items' => $toItems($calc['packages'][0]), 'images' => []]];
     else { $data['sections'] = []; $data['options'] = array_map(fn($p) => ['name' => ROOF_MATS[$p['material']]['short'], 'note' => $p['label'], 'sections' => [['title' => 'Roofing - ' . $p['label'], 'items' => $toItems($p), 'images' => []]]], $calc['packages']); $data['selected_option'] = 0; }
@@ -552,4 +554,17 @@ function roofing_quote_create(array $a, array $user): array
         $out['selected_option'] = $d2['options'][0]['name'] . ' (the client chooses on the quote page)'; $out['totals'] = ['grand_total_for_selected_option' => $r['total']];
     }
     return $out;
+}
+
+/** Price factor (percent, -50..+100) from a request: 1.12 means "rates +12%". */
+function price_factor_from(array $a): float
+{
+    if (!isset($a['price_factor']) || $a['price_factor'] === '' || $a['price_factor'] === null) return 1.0;
+    if (!is_numeric($a['price_factor']) || (float)$a['price_factor'] < -50 || (float)$a['price_factor'] > 100) fail('price_factor must be a percentage between -50 and 100');
+    return 1 + (float)$a['price_factor'] / 100;
+}
+function price_factor_note(array $a): string
+{
+    $pct = (float)$a['price_factor']; $label = trim((string)($a['price_factor_label'] ?? ''));
+    return 'Rates adjusted ' . ($pct >= 0 ? '+' : '') . rtrim(rtrim(number_format($pct, 2), '0'), '.') . '% from the standard rate card' . ($label !== '' ? ' (' . mb_substr($label, 0, 80) . ')' : '') . '.';
 }

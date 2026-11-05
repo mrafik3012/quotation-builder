@@ -50,7 +50,17 @@ Dashboard → **⚡ Quick quote**: choose the service, pick (or type) the client
 | Construction | built-up area, floors, Grey / Standard / Premium finish | turnkey cost, waterproofing, design, approvals, testing, insurance |
 | PMC | project cost (or area), months, Full or Part scope | fee by cost band (3% / 2.5% / 2%), site engineer & QS, quality and safety audits, handover |
 
+**More accurate options.** *Interior → "Measure room by room"*: list each room (living, bedroom, kitchen, bathroom, dining, study, pooja, balcony, utility) with length × width; the quote then has one section per room, with wardrobes sized from the room, ceiling and paint areas from the dimensions (walls = perimeter × height minus door/window openings), kitchen run from the two walls, bathroom waterproofing and fittings, and electrical points by area. *Construction → "Detailed bill of quantities"*: itemised earthwork, footings, columns, beams and slabs (concrete), steel (about 4 kg/sq ft), shuttering, masonry, plaster, flooring, doors and windows, electrical and plumbing, painting, plus overhead (12%) and contingency (5%). Quantities come from standard thumb rules for RCC-framed buildings (about 0.045 m³ concrete per sq ft, footprint = area ÷ floors) and the quote says they are estimates to be confirmed against drawings or site measurement.
+
 Pick several finishes/materials/scopes and the client gets **one quote with options** to choose from. Because prices are read from the rate cards, updating a rate changes every future quick quote. The same engine serves AI assistants (`create_quick_quote`, see [MCP.md](MCP.md)).
+
+### Pricing tools
+- **Bulk price change** (Rate Cards → *Bulk price change*, admin): raise or lower rates by a percentage for one service or all, optionally cost prices too. Shows how many items will change first. Existing quotes are not touched. Every change is in the audit log.
+- **Price levels** (Settings → *Price factors for quick quotes*): lines like `Metro|12` and `Smaller town|-8`. Choose one in **Quick quote → Price level** and every rate in that quote moves by that percentage; the quote notes the adjustment.
+
+### Revisions and change orders
+- **Compare revisions**: on any quote with revisions, *Compare with this* shows added, removed and changed lines and the change in total.
+- **Client-approved change orders**: in a project, add a variation, then *Send for client approval*. The client gets an e-mail (or a link you can WhatsApp), reviews the extra cost incl. GST and the new contract value, and approves or declines online with their name. Approval adds the billing milestone automatically, stores who approved, when and from which IP, and e-mails you. Once a project exists the original quote stays locked; changes only happen through these signed change orders.
 
 ## 6. Connect AI assistants
 Settings → **AI assistants (MCP)**. Claude.ai: *Settings → Connectors → Add custom connector →* paste the server address, then sign in here and press Allow. Claude Code / Desktop / Cursor / VS Code: create a token and use the ready-made snippet. Details: [MCP.md](MCP.md).

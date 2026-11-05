@@ -33,6 +33,7 @@ PHP 8.0+ with `pdo_mysql` is required (default on Hostinger).
 - **Accounts & security** - two-step sign-in (authenticator app + recovery codes), forgot/reset password by e-mail, admin password reset, last-admin protection, sign-in lockout, roles, rate limits, audit log.
 - **E-mail** (SMTP) - quotes to clients, reset links, daily summary, optional client reminders.
 - **Automation** - one-step **Quick quote** for Roofing, Interior, Construction and PMC (a few inputs in, priced draft out, optionally e-mailed to the client); the app runs its own backups/summaries/reminders (no cron needed), e-mails you when a client opens/accepts/declines, creates the project on acceptance, chases overdue payments (opt-in), and can auto-deploy from GitHub to Hostinger.
+- **Commercial controls** - bulk price change, price levels (metro / tier-2 / town) for quick quotes, side-by-side revision compare, and change orders the client approves online.
 - **Operations** - daily jobs (backup, summary e-mail, reminders; optional cron), health endpoint for uptime monitors, error log, system-health card, JSON backup, **privacy tools** (export / erase client data), paginated lists tested at 4,000+ quotes, installable PWA.
 - **AI assistants** - built-in MCP server with OAuth: see below.
 - Database upgrades run automatically on first admin sign-in after uploading new files (`api/migrate.php`).

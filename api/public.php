@@ -22,6 +22,7 @@ try {
     rate_limit('pub:' . $ip, 200, 600);
     if ($method === 'POST') rate_limit('pubpost:' . $ip, 15, 600);
 
+    if ($act === 'variation' || $act === 'variation-respond') variation_public($act, $method, $tok, $ip);
     $share = q('SELECT quote_no FROM quote_shares WHERE token = ?', [$tok])->fetch();
     if (!$share) fail('This link is not valid or has been withdrawn', 404);
     $row = q('SELECT * FROM quotes WHERE quote_no = ? AND is_latest = 1', [$share['quote_no']])->fetch();
@@ -149,4 +150,41 @@ function notify_quote_event(array $row, string $what, array $detail): void
             send_mail($cl['email'], 'Thank you - quotation ' . $row['quote_no'] . ' accepted', email_html('Thank you', '<p>Dear ' . $who . ',</p><p>Thank you for accepting quotation <b>' . $e($row['quote_no']) . '</b> (' . $inr . '). Our team will contact you shortly to schedule the work.</p><p>' . $e($co) . '</p>'));
         }
     });
+}
+
+/** Client-facing change order: view it and approve or decline online (the signed approval is stored on the variation). */
+function variation_public(string $act, string $method, string $tok, string $ip): void
+{
+    $v = q('SELECT v.*, p.name AS pname, p.quote_no, p.tax_rate, p.base_value, p.id AS pid FROM project_variations v JOIN projects p ON p.id = v.project_id WHERE v.approval_token = ?', [$tok])->fetch();
+    if (!$v) fail('This link is not valid or has been withdrawn', 404);
+    $gst = round((float)$v['amount'] * (float)$v['tax_rate'] / 100, 2); $total = round((float)$v['amount'] + $gst, 2);
+    if ($act === 'variation' && $method === 'GET') {
+        $st = [];
+        foreach (['company_name', 'company_address', 'company_phone', 'company_email', 'company_gstin', 'signatory'] as $k) $st[$k] = get_setting($k) ?? '';
+        $appr = (float)q("SELECT COALESCE(SUM(amount),0) AS s FROM project_variations WHERE project_id = ? AND status = 'approved'", [$v['pid']])->fetch()['s'];
+        $before = round((float)$v['base_value'] + $appr * (1 + (float)$v['tax_rate'] / 100), 2);
+        json_out(['settings' => $st, 'variation' => ['title' => $v['title'], 'note' => $v['note'], 'amount' => (float)$v['amount'], 'gst' => $gst, 'total' => $total, 'gst_rate' => (float)$v['tax_rate'], 'status' => $v['status'],
+            'decided_by' => $v['decided_by'], 'decided_at' => $v['decided_at']], 'project' => ['name' => $v['pname'], 'quote_no' => $v['quote_no']], 'contract_before' => $before, 'contract_after' => round($before + ($v['status'] === 'approved' ? 0 : $total), 2)]);
+    }
+    if ($act === 'variation-respond' && $method === 'POST') {
+        if ($v['status'] !== 'proposed') fail('This change order has already been ' . $v['status'] . '.', 409);
+        $d = body(); $name = str($d['name'] ?? '', 120); $action = (string)($d['action'] ?? '');
+        if (!in_array($action, ['accept', 'decline'], true)) fail('Unknown action');
+        if ($action === 'accept' && $name === '') fail('Please type your full name to approve');
+        if (!isset($d['expected_total']) || !is_numeric($d['expected_total']) || abs((float)$d['expected_total'] - $total) > 0.01) fail('This change order was updated while you were viewing it. Please reload the page.', 409);
+        $new = $action === 'accept' ? 'approved' : 'rejected';
+        db()->beginTransaction();
+        $up = q("UPDATE project_variations SET status = ?, decided_by = ?, decided_at = ?, decided_ip = ?, client_note = ? WHERE id = ? AND status = 'proposed'", [$new, $name ?: null, now(), $ip, str($d['note'] ?? '', 500) ?: null, $v['id']]);
+        if ($up->rowCount() !== 1) { db()->rollBack(); fail('This change order has already been responded to.', 409); }
+        if ($new === 'approved') { $mid = variation_milestone((int)$v['pid'], $v); q('UPDATE project_variations SET milestone_id = ? WHERE id = ?', [$mid, $v['id']]); }
+        db()->commit();
+        q('INSERT INTO quote_events (quote_no,rev,type,detail,actor,ip,created_at) VALUES (?,?,?,?,?,?,?)', [$v['quote_no'], 0, 'variation_' . $new, json_encode(['title' => $v['title'], 'total' => $total], JSON_UNESCAPED_UNICODE), $name ?: null, $ip, now()]);
+        $title = $v['title']; $pname = $v['pname']; $ok = $new === 'approved';
+        after_response(function () use ($title, $pname, $ok, $name, $total) {
+            $e = fn($x) => htmlspecialchars((string)$x, ENT_QUOTES, 'UTF-8');
+            notify_admins(($ok ? 'Change order APPROVED: ' : 'Change order declined: ') . $title, $ok ? 'Change order approved' : 'Change order declined', '<p>' . $e($name ?: 'The client') . ($ok ? ' approved' : ' declined') . ' the change order <b>' . $e($title) . '</b> on <b>' . $e($pname) . '</b> (Rs ' . number_format($total, 2) . ' incl. GST).' . ($ok ? '<br>A billing milestone has been added to the project.' : '') . '</p>');
+        });
+        json_out(['ok' => true, 'status' => $new]);
+    }
+    fail('Not found', 404);
 }

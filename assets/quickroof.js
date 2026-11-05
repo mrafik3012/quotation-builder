@@ -14,10 +14,13 @@ function quickFields(svc) {
     <label class="f"><span><input type="checkbox" name="include_gutters" checked> Include gutters &amp; downpipes</span></label>`;
   if (svc === 'interior') return `
     <div class="grid2"><label class="f"><span>Home size (BHK) *</span><select name="bhk">${[1, 2, 3, 4, 5].map(n => `<option value="${n}" ${n === 2 ? 'selected' : ''}>${n} BHK</option>`).join('')}</select></label><label class="f"><span>Carpet area (sq ft, optional)</span><input name="carpet_sqft" type="number" min="200" step="any" placeholder="from BHK if empty"></label></div>
+    <label class="f"><span><input type="checkbox" id="qroomsOn"> Measure room by room (more accurate than BHK)</span></label>
+    <div id="qrooms" hidden><div id="qroomrows"></div><div class="row"><button type="button" class="btn sm" id="qaddroom">+ Add room</button><label class="f" style="margin:0"><span><input type="checkbox" name="include_flooring"> Include flooring</span></label></div></div>
     ${tiers('Finish', [['standard', 'Standard'], ['premium', 'Premium']], 0)}`;
   if (svc === 'construction') return `
     <div class="grid2"><label class="f"><span>Built-up area (sq ft) *</span><input name="built_up_sqft" type="number" min="100" step="any" required></label><label class="f"><span>Floors</span><input name="floors" type="number" min="1" value="1"></label></div>
     ${tiers('Finish', [['grey', 'Grey structure'], ['standard', 'Standard finish'], ['premium', 'Premium finish']], 1)}
+    <label class="f"><span><input type="checkbox" name="detailed"> Detailed bill of quantities (earthwork, concrete, steel, masonry, finishes, MEP) instead of one turnkey rate</span></label>
     <label class="f"><span><input type="checkbox" name="include_design" checked> Include architectural &amp; structural design</span></label>
     <label class="f"><span><input type="checkbox" name="include_waterproofing" checked> Include terrace waterproofing</span></label>
     <label class="f"><span><input type="checkbox" name="include_approvals" checked> Include plan approval allowance</span></label>`;
@@ -27,21 +30,34 @@ function quickFields(svc) {
     ${tiers('Scope', [['full', 'Full PMC'], ['part', 'Part scope (design review / QS)']], 0)}
     <label class="f"><span><input type="checkbox" name="site_staff" checked> Include full-time site engineer &amp; QS</span></label>`;
 }
+const QUICK_ROOM_TYPES = [['living', 'Living'], ['bedroom', 'Bedroom'], ['kitchen', 'Kitchen'], ['bathroom', 'Bathroom'], ['dining', 'Dining'], ['study', 'Study'], ['pooja', 'Pooja'], ['balcony', 'Balcony'], ['utility', 'Utility']];
+function quickRoomRow(type, l, w) {
+  return `<div class="row qroom" style="gap:6px;margin-bottom:6px"><select aria-label="Room type" class="qr-type">${QUICK_ROOM_TYPES.map(([k, v]) => `<option value="${k}" ${k === type ? 'selected' : ''}>${v}</option>`).join('')}</select><input aria-label="Length (ft)" class="qr-l" type="number" min="3" step="any" placeholder="L ft" value="${l || ''}" style="max-width:90px"><span>×</span><input aria-label="Width (ft)" class="qr-w" type="number" min="3" step="any" placeholder="W ft" value="${w || ''}" style="max-width:90px"><button type="button" class="btn sm qr-del" aria-label="Remove room">✕</button></div>`;
+}
+function wireQuickRooms(root) {
+  const on = $('#qroomsOn', root); if (!on) return;
+  const box = $('#qrooms', root), rows = $('#qroomrows', root);
+  const add = (t, l, w) => { rows.insertAdjacentHTML('beforeend', quickRoomRow(t, l, w)); $$('.qr-del', rows).forEach(b => { b.onclick = () => b.parentElement.remove(); }); };
+  on.onchange = () => { box.hidden = !on.checked; if (on.checked && !rows.children.length) { add('living', 15, 12); add('bedroom', 12, 11); add('kitchen', 9, 8); add('bathroom', 8, 5); } };
+  $('#qaddroom', root).onclick = () => add('bedroom', '', '');
+}
 function quickRoofDialog(initial) {
   let svc = initial || 'roofing';
   const clients = S.clients || [];
+  const factors = String((S.settings && S.settings.price_factors) || '').split(/\r?\n/).map(l => l.split('|')).filter(a => a.length === 2 && a[0].trim() && !isNaN(parseFloat(a[1]))).map(a => [a[0].trim(), parseFloat(a[1])]);
   const m = openModal(`<h2>Quick quote</h2><p class="small muted">A few details in, a fully priced draft out. Prices come from your rate cards.</p><form id="qrf">
   <div class="pmc-modes" id="qsvc" role="group" aria-label="Service">${Object.entries(QUICK_SERVICES).map(([k, v]) => `<label class="${k === svc ? 'on' : ''}"><input type="radio" name="svc" value="${k}" ${k === svc ? 'checked' : ''}>${esc(v.label)}</label>`).join('')}</div>
   <label class="f"><span>Client</span><select name="client_id"><option value="">— new / not decided —</option>${clients.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
   <label class="f"><span>…or new client name</span><input name="client_name" autocomplete="off"></label>
   <div id="qfields">${quickFields(svc)}</div>
+  ${factors.length ? `<label class="f"><span>Price level</span><select name="price_factor"><option value="">Standard rates</option>${factors.map(([l, p]) => `<option value="${p}">${esc(l)} (${p > 0 ? '+' : ''}${p}%)</option>`).join('')}</select></label>` : ''}
   <label class="f"><span><input type="checkbox" name="send"> E-mail it to the client right away (needs a client with an e-mail)</span></label>
   <div class="row end"><button type="button" class="btn" id="qrx">Cancel</button><button class="btn pri">Create quote</button></div></form>`);
   const wireGroups = () => $$('.pmc-modes[data-group] input', m.el).forEach(i => { i.onchange = () => i.parentElement.classList.toggle('on', i.checked); });
-  wireGroups();
+  wireGroups(); wireQuickRooms(m.el);
   $('#qrx', m.el).onclick = m.close;
   $$('#qsvc input', m.el).forEach(r => {
-    r.onchange = () => { svc = r.value; $$('#qsvc label', m.el).forEach(l => l.classList.toggle('on', l.firstElementChild.checked)); $('#qfields', m.el).innerHTML = quickFields(svc); wireGroups(); };
+    r.onchange = () => { svc = r.value; $$('#qsvc label', m.el).forEach(l => l.classList.toggle('on', l.firstElementChild.checked)); $('#qfields', m.el).innerHTML = quickFields(svc); wireGroups(); wireQuickRooms(m.el); };
   });
   $('#qrf', m.el).onsubmit = e => {
     e.preventDefault();
@@ -49,6 +65,7 @@ function quickRoofDialog(initial) {
     const group = name => $$(`.pmc-modes[data-group=${name}] input:checked`, m.el).map(i => i.value);
     const num = k => (f.elements[k] && f.elements[k].value !== '' ? +f.elements[k].value : undefined);
     const chk = k => (f.elements[k] ? f.elements[k].checked : undefined);
+    if (f.elements.price_factor && f.elements.price_factor.value !== '') { body.price_factor = +f.elements.price_factor.value; body.price_factor_label = f.elements.price_factor.selectedOptions[0].textContent.replace(/\s*\([+-]?[\d.]+%\)$/, ''); }
     if (f.client_id.value) body.client_id = +f.client_id.value; else if (f.client_name.value.trim()) body.client = { name: f.client_name.value.trim() };
     if (svc === 'roofing') {
       const mats = group('materials'); if (!mats.length) return toast('Pick at least one material', 'err');
@@ -56,8 +73,15 @@ function quickRoofDialog(initial) {
     } else {
       const v = group('variants'); if (!v.length) return toast('Pick at least one option', 'err');
       body.variants = v;
-      if (svc === 'interior') Object.assign(body, { bhk: num('bhk'), carpet_sqft: num('carpet_sqft') });
-      if (svc === 'construction') Object.assign(body, { built_up_sqft: num('built_up_sqft'), floors: num('floors'), include_design: chk('include_design'), include_waterproofing: chk('include_waterproofing'), include_approvals: chk('include_approvals') });
+      if (svc === 'interior') {
+        Object.assign(body, { bhk: num('bhk'), carpet_sqft: num('carpet_sqft') });
+        if ($('#qroomsOn', m.el).checked) {
+          body.rooms = $$('.qroom', m.el).map(r => ({ type: $('.qr-type', r).value, length_ft: +$('.qr-l', r).value, width_ft: +$('.qr-w', r).value }));
+          if (!body.rooms.length || body.rooms.some(r => !(r.length_ft > 0 && r.width_ft > 0))) return toast('Enter length and width for every room', 'err');
+          body.include_flooring = chk('include_flooring');
+        }
+      }
+      if (svc === 'construction') Object.assign(body, { built_up_sqft: num('built_up_sqft'), floors: num('floors'), detailed: chk('detailed'), include_design: chk('include_design'), include_waterproofing: chk('include_waterproofing'), include_approvals: chk('include_approvals') });
       if (svc === 'pmc') Object.assign(body, { project_cost: num('project_cost'), built_up_sqft: num('built_up_sqft'), duration_months: num('duration_months'), site_staff: chk('site_staff') });
     }
     guard(async () => {

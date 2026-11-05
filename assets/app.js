@@ -221,6 +221,24 @@ async function route() {
   }
 }
 
+/* ---------- bulk price change (rate cards) ---------- */
+function bulkPriceDialog() {
+  const m = openModal(`<h2>Bulk price change</h2><p class="small muted">Raise or lower rates by a percentage - for example when steel or sheet prices move. Existing quotes are not changed.</p><form id="bpf">
+   <label class="f"><span>Service</span><select name="division"><option value="">All services</option>${Object.entries(DIVS).map(([k, l]) => `<option value="${k}" ${k === RF.div ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+   <label class="f"><span>Change (%) — e.g. 5 to raise by 5%, -3 to lower</span><input name="percent" type="number" step="any" min="-50" max="100" required></label>
+   <label class="f"><span><input type="checkbox" name="include_cost"> Change cost prices too (keeps margins unchanged)</span></label>
+   <p id="bpn" class="small muted" aria-live="polite"></p>
+   <div class="row end"><button type="button" class="btn" id="bpx">Cancel</button><button class="btn pri">Apply</button></div></form>`);
+  const f = $('#bpf', m.el), body = () => ({ division: f.division.value, percent: +f.percent.value, include_cost: f.include_cost.checked });
+  const preview = async () => { if (!f.percent.value) return; try { const r = await api('rates/bulk-adjust', 'POST', { ...body(), dry_run: true }); $('#bpn', m.el).textContent = r.would_change + ' active item(s) will change.'; } catch (e) { $('#bpn', m.el).textContent = e.message; } };
+  f.division.onchange = preview; f.percent.oninput = preview;
+  $('#bpx', m.el).onclick = m.close;
+  f.onsubmit = e => { e.preventDefault(); guard(async () => {
+    const b = body(); if (!confirmBox(`Change ${b.division ? DIVS[b.division] : 'ALL'} rates by ${b.percent}%?`)) return;
+    const r = await api('rates/bulk-adjust', 'POST', b); m.close(); await loadBootstrap(); toast(r.changed + ' rate(s) updated', 'ok'); pageRates();
+  }); };
+}
+
 /* ---------- self-running jobs + setup checklist ---------- */
 function tick() { if (S.user) api('tick', 'POST', {}).catch(() => {}); }   // lets the server run backups/summaries/reminders without any cron setup
 async function setupCard() {
@@ -394,7 +412,7 @@ const csvCell = s => { s = String(s ?? ''); return /[",\n]/.test(s) ? '"' + s.re
 async function pageRates() {
   S.rates = await api('rates');
   const v = $('#view');
-  v.innerHTML = `<div class="page-head"><h1>Rate Cards</h1><button class="btn" data-act="exp">Export CSV</button>${S.user.role === 'admin' ? '<button class="btn" data-act="imp">Import CSV</button><button class="btn pri" data-act="new">+ New item</button>' : ''}<input type="file" id="fi" accept=".csv,text/csv" hidden></div>
+  v.innerHTML = `<div class="page-head"><h1>Rate Cards</h1><button class="btn" data-act="exp">Export CSV</button>${S.user.role === 'admin' ? '<button class="btn" data-act="imp">Import CSV</button><button class="btn" data-act="bulk">Bulk price change</button><button class="btn pri" data-act="new">+ New item</button>' : ''}<input type="file" id="fi" accept=".csv,text/csv" hidden></div>
   <div class="card"><div class="tabs">${Object.entries(DIVS).map(([k, l]) => `<button data-act="tab" data-d="${k}" class="${k === RF.div ? 'on' : ''}">${l} <span class="muted small">${S.rates.filter(r => r.division === k).length}</span></button>`).join('')}</div>
   <input id="rs" aria-label="Search rate card items" placeholder="Search items…" value="${esc(RF.q)}" style="max-width:280px;margin-bottom:12px">
   <p class="muted small" style="margin:0 0 10px">Rates shown are indicative starting values — edit them to your actual costs. Items you mark inactive stay saved but are hidden from the quote picker.</p>
@@ -435,6 +453,7 @@ async function pageRates() {
     else if (a === 'edit') rateModal(S.rates.find(r => r.id == t.dataset.id));
     else if (a === 'del') { const r = S.rates.find(x => x.id == t.dataset.id); if (confirmBox(`Delete "${r.name}"? Existing quotes are not affected.`)) guard(async () => { await api('rates/' + r.id, 'DELETE'); toast('Deleted', 'ok'); pageRates(); }); }
     else if (a === 'imp') $('#fi').click();
+    else if (a === 'bulk') bulkPriceDialog();
     else if (a === 'exp') {
       const lines = [['division', 'category', 'name', 'unit', 'rate', 'description', 'cost'].join(',')].concat(S.rates.filter(r => r.division === RF.div).map(r => [r.division, r.category, r.name, r.unit, r.rate, r.description, r.cost].map(csvCell).join(',')));
       download(`rate-card-${RF.div}.csv`, lines.join('\n'));
@@ -489,6 +508,7 @@ async function pageSettings() {
   <div class="card"><h2>Quote defaults</h2><div class="grid3">${inp('quote_prefix', 'Quote number prefix')}${inp('validity_days', 'Validity (days)', 'number')}${inp('min_margin', 'Low-margin alert below (%)', 'number')}
   ${Object.entries(DIVS).map(([k, l]) => inp('gst_' + k, 'GST % — ' + l, 'number')).join('')}${Object.entries(DIVS).map(([k, l]) => inp('hsn_' + k, 'HSN / SAC — ' + l)).join('')}</div></div>
   <div class="card"><h2>Bank details (printed on quotations)</h2>${ta('bank_details', 'Bank details', 5)}</div>
+  <div class="card"><h2>Price factors for quick quotes</h2><p class="muted small">One per line as <b>Name|percent</b>. Pick one when making a quick quote to raise or lower every rate (for example a metro city +12%).</p>${ta('price_factors', 'Factors', 5)}</div>
   <div class="card"><h2>Default terms &amp; conditions (one per line)</h2><div class="grid2">${Object.entries(DIVS).map(([k, l]) => ta('terms_' + k, l, 8)).join('')}</div></div>
   <div class="card"><h2>Default payment schedule — one stage per line as "Stage name|percent"</h2><div class="grid2">${Object.entries(DIVS).map(([k, l]) => ta('pay_' + k, l, 5)).join('')}</div></div></fieldset>
   ${admin ? `<div class="card"><h2>Backup &amp; activity log</h2><div class="row"><a class="btn" href="api/index.php?r=backup">Download full backup (JSON)</a><span class="muted small">Quotes, clients, rate cards, projects and settings. Keep a copy regularly - also enable automatic backups in Hostinger hPanel.</span></div><div id="audit" style="margin-top:12px"></div></div>` : ''}

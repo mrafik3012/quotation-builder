@@ -170,6 +170,32 @@ const ok = (c, m) => { if (c) { passed++; console.log('  ok   ' + m); } else { f
   if (axeSrc) { await page.evaluate(axeSrc); const r = await page.evaluate(async () => await axe.run(document, { runOnly: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] })); const bad = r.violations.filter(v => ['serious', 'critical'].includes(v.impact)); ok(bad.length === 0, 'interior quick-quote form: no serious/critical a11y issues' + (bad.length ? ' - ' + bad.map(v => v.id).join(', ') : '')); }
   await page.fill('input[name=client_name]', 'Browser Interior Co'); await page.click('#qrf button.pri'); await page.waitForFunction(() => /#\/quotes\/\d+/.test(location.hash), null, { timeout: 8000 });
   ok(/#\/quotes\/\d+/.test(page.url()), 'interior quick quote opens the new draft');
+  await go('#/dashboard'); await page.waitForSelector('#quickroof'); await page.click('#quickroof'); await page.waitForSelector('#qrf');
+  await page.click('#qsvc label:has(input[value=interior])'); await page.check('#qroomsOn'); await page.waitForSelector('.qroom');
+  ok((await page.locator('.qroom').count()) === 4, 'room-by-room starts with 4 sample rooms'); await page.click('#qaddroom'); ok((await page.locator('.qroom').count()) === 5, 'rooms can be added');
+  if (axeSrc) { await page.evaluate(axeSrc); const r = await page.evaluate(async () => await axe.run(document, { runOnly: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] })); const bad = r.violations.filter(v => ['serious', 'critical'].includes(v.impact)); ok(bad.length === 0, 'room-by-room form: no serious/critical a11y issues' + (bad.length ? ' - ' + bad.map(v => v.id).join(', ') : '')); }
+  await page.locator('.qroom').last().locator('.qr-l').fill('10'); await page.locator('.qroom').last().locator('.qr-w').fill('10');
+  await page.fill('input[name=client_name]', 'Browser Rooms Co'); await page.click('#qrf button.pri'); await page.waitForFunction(() => /#\/quotes\/\d+/.test(location.hash), null, { timeout: 8000 });
+  await page.waitForFunction(() => [...document.querySelectorAll('input,textarea')].some(e => /Living \(15 x 12 ft\)/.test(e.value)) || /Living \(15 x 12 ft\)/.test(document.body.innerText), null, { timeout: 8000 }); ok(true, 'room-by-room quote shows one section per room');
+  await go('#/dashboard'); await page.waitForSelector('#quickroof'); await page.click('#quickroof'); await page.waitForSelector('#qrf');
+  await page.click('#qsvc label:has(input[value=construction])'); await page.fill('input[name=built_up_sqft]', '1800'); await page.check('input[name=detailed]');
+  await page.fill('input[name=client_name]', 'Browser BOQ Co'); await page.click('#qrf button.pri'); await page.waitForFunction(() => /#\/quotes\/\d+/.test(location.hash), null, { timeout: 8000 });
+  await page.waitForFunction(() => [...document.querySelectorAll('input,textarea')].some(e => /Foundation & RCC structure/.test(e.value)) || /Foundation & RCC structure/.test(document.body.innerText), null, { timeout: 8000 }); ok(true, 'detailed BOQ quote shows itemised sections');
+
+  console.log('\nChange-order approval page, bulk price dialog, revision compare');
+  const vid = (await api('POST', `projects/${pid}/variations`, { title: 'Browser extra <b>work</b>', note: 'x', amount: 2500 })).data.id;
+  const vlink = (await api('POST', `projects/${pid}/variations/${vid}/request-approval`, {})).data.link;
+  await page.goto(vlink); await page.waitForSelector('#vyes');
+  ok(!(await page.content()).includes('<b>work</b></h3>'), 'change-order title is escaped (no HTML injection)');
+  if (axeSrc) { await page.evaluate(axeSrc); const r = await page.evaluate(async () => await axe.run(document, { runOnly: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] })); const bad = r.violations.filter(v => ['serious', 'critical'].includes(v.impact)); ok(bad.length === 0, 'approval page: no serious/critical a11y issues' + (bad.length ? ' - ' + bad.map(v => v.id + ' (' + v.nodes.map(n => n.target.join(' ') + ' ' + (n.any[0] && n.any[0].message || '')).slice(0, 3).join('; ') + ')').join(', ') : '')); }
+  await page.fill('#vn', 'Browser Client'); await page.click('#vyes'); await page.waitForSelector('text=Approved', { timeout: 8000 }); ok(true, 'client can approve a change order in the browser');
+  await go('#/rates'); await page.waitForSelector('[data-act=bulk]'); await page.click('[data-act=bulk]'); await page.waitForSelector('#bpf');
+  await page.fill('input[name=percent]', '3'); await page.waitForFunction(() => /will change/.test(document.querySelector('#bpn').textContent), null, { timeout: 5000 }); ok(true, 'bulk price dialog previews how many items change');
+  if (axeSrc) { await page.evaluate(axeSrc); const r = await page.evaluate(async () => await axe.run(document, { runOnly: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] })); const bad = r.violations.filter(v => ['serious', 'critical'].includes(v.impact)); ok(bad.length === 0, 'bulk price dialog: no serious/critical a11y issues' + (bad.length ? ' - ' + bad.map(v => v.id).join(', ') : '')); }
+  await page.click('#bpx');
+  const rvr = await api('POST', `quotes/${ta.id}/revise`); if (rvr.status !== 201) console.log('  note: revise returned', rvr.status, JSON.stringify(rvr.data).slice(0, 200)); const rev1 = rvr.data; await go(`#/quotes/${rev1.id}`); await page.waitForSelector('[data-act=cmp]'); await page.click('[data-act=cmp]'); await page.waitForSelector('#cmpx');
+  if (axeSrc) { await page.evaluate(axeSrc); const r = await page.evaluate(async () => await axe.run(document, { runOnly: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] })); const bad = r.violations.filter(v => ['serious', 'critical'].includes(v.impact)); ok(bad.length === 0, 'revision compare: no serious/critical a11y issues' + (bad.length ? ' - ' + bad.map(v => v.id + ' (' + v.nodes.map(n => n.target.join(' ') + ' ' + (n.any[0] && n.any[0].message || '').slice(0, 110)).slice(0, 3).join('; ') + ')').join(', ') : '')); }
+  await page.click('#cmpx');
 
   /* ---------- staff UI ---------- */
   console.log('\nStaff role UI');

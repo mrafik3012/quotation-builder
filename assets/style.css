@@ -52,7 +52,7 @@ table{border-collapse:collapse;width:100%}
 .scroll{overflow-x:auto}
 .chip{display:inline-block;padding:1px 9px;border-radius:99px;font-size:11.5px;font-weight:700;background:#2a2619;color:#d8cfb3;white-space:nowrap}
 .chip.draft{background:#2a2619}.chip.sent{background:var(--bluebg);color:var(--blue)}.chip.accepted{background:var(--okbg);color:var(--ok)}
-.chip.rejected{background:var(--badbg);color:var(--bad)}.chip.superseded{background:#1c1c1c;color:#777}
+.chip.rejected{background:var(--badbg);color:var(--bad)}.chip.superseded{background:#1c1c1c;color:#a8a8a8}
 .chip.div{background:var(--brand-l);color:var(--brand-d)}
 .muted{color:var(--mut)}.bad{color:var(--bad);font-weight:700}.good{color:var(--ok);font-weight:700}.small{font-size:12px}
 .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:14px;flex-wrap:wrap}
@@ -159,3 +159,4 @@ pre.snip{background:#0b0b0b;border:1px solid #2b2619;border-radius:8px;padding:1
 .pubwrap h2,.optpick{margin:0}
 
 .checklist{list-style:none;margin:10px 0 0;padding:0}.checklist li{padding:5px 0;font-size:14px}.checklist li.ok{color:var(--muted)}.checklist li.ok a{color:inherit}
+.t tr.add td:first-child{color:#6fcf97;font-weight:700}.t tr.rem td{text-decoration:line-through;color:var(--muted)}.t tr.chg td:first-child{color:var(--gold,#d4af37);font-weight:700}
