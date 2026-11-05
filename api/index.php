@@ -7,6 +7,7 @@ require __DIR__ . '/projects.php';
 require __DIR__ . '/mail.php';
 require __DIR__ . '/auth.php';
 require __DIR__ . '/jobs.php';
+require __DIR__ . '/quick.php';
 start_session();
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -481,9 +482,9 @@ function send_quote_email(array $row, array $user, string $to, string $msg): voi
 
 function quotes_route(string $m, ?string $b, ?string $c, array $user): void
 {
-    if ($m === 'POST' && $b === 'quick-roofing') {   // one step: size + material in, priced draft out; optionally sent to the client straight away
+    if ($m === 'POST' && ($b === 'quick-roofing' || ($b === 'quick' && $c !== null))) {   // one step: a few inputs in, priced draft out; optionally sent to the client straight away
         $d = body();
-        $out = roofing_quote_create($d, $user);
+        $out = $b === 'quick-roofing' ? roofing_quote_create($d, $user) : quick_quote_create((string)$c, $d, $user);
         if (!empty($d['send'])) {
             $row = q('SELECT * FROM quotes WHERE id = ?', [$out['quote_id']])->fetch();
             $cl = json_decode((string)$row['client_json'], true) ?: [];

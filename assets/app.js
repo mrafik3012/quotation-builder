@@ -250,7 +250,7 @@ async function pageDashboard() {
   const maxD = Math.max(1, ...d.by_division.map(m => m.value));
   const dv = Object.fromEntries(d.by_division.map(x => [x.division, x]));
   $('#view').innerHTML = `
-  <div class="page-head"><h1>Dashboard</h1><span><button class="btn pri" id="quickroof" type="button">⚡ Quick roofing quote</button> <a class="btn" href="#/quotes">All quotes</a></span></div>
+  <div class="page-head"><h1>Dashboard</h1><span><button class="btn pri" id="quickroof" type="button">⚡ Quick quote</button> <a class="btn" href="#/quotes">All quotes</a></span></div>
   ${setup}
   <div class="tiles">
    <div class="tile"><div class="l">Quotes</div><div class="v">${total}</div><div class="s">latest revisions</div></div>

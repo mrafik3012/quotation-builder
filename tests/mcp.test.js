@@ -138,6 +138,12 @@ const payload = res => JSON.parse(res.content[0].text);
 
   console.log('\nOne-step roofing quote (the "60x30 GI A-type" request)');
   let rq;
+  await test('create_quick_quote: interior / construction / pmc drafts in one call; read-only token refused', async () => {
+    const i = payload(await call(writeTok, 'create_quick_quote', { division: 'interior', bhk: 3, variants: ['standard', 'premium'], client: { name: 'MCP Quick' } })); eq(i.options.length, 2); ok(i.quote_no, 'quote number');
+    const c = payload(await call(writeTok, 'create_quick_quote', { division: 'construction', built_up_sqft: 1200, client: { name: 'MCP Quick' } })); ok(c.totals.grand_total > 2000000, 'construction total ' + c.totals.grand_total);
+    const p = payload(await call(writeTok, 'create_quick_quote', { division: 'pmc', project_cost: 10000000, duration_months: 8, client: { name: 'MCP Quick' } })); ok(p.totals.grand_total > 300000, 'pmc total');
+    const bad = await call(writeTok, 'create_quick_quote', { division: 'interior', bhk: 99 }); ok(bad.isError || (bad.result && bad.result.isError), 'invalid input is a tool error');
+  });
   await test('create_roofing_quote: GI, 60x30 ft, A-type -> a complete draft in ONE call, with no client given', async () => {
     rq = payload(await call(writeTok, 'create_roofing_quote', { length_ft: 60, width_ft: 30, material: 'gi', roof_type: 'gable' }));
     eq(rq.status, 'draft'); eq(rq.client, 'Client to be confirmed'); ok(rq.warnings.some(w => /client/i.test(w)), 'warns about client'); ok(rq.assumptions.length >= 3, 'states assumptions'); ok(/gable/i.test(rq.roof.type));
